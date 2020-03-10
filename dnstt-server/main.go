@@ -115,7 +115,12 @@ func acceptSessions(ln *kcp.Listener, mtu int, upstream *net.TCPAddr) error {
 
 func handle(c net.PacketConn, p []byte, addr net.Addr) error {
 	fmt.Printf("handle %v %x\n", addr, p)
-	_, err := c.WriteTo([]byte("hello"), addr)
+	message, err := dns.MessageFromWireFormat(p)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%#v\n", message)
+	_, err = c.WriteTo([]byte("hello"), addr)
 	return err
 }
 
@@ -215,7 +220,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "usage: %s -udp ADDR DOMAIN UPSTREAMADDR\n", os.Args[0])
 		os.Exit(1)
 	}
-	domain, err := dns.ParseName([]byte(flag.Arg(0)))
+	domain, err := dns.ParseName(flag.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
 		os.Exit(1)
