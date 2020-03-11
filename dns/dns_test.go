@@ -375,3 +375,65 @@ func TestMessageFromWireFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageWireFormatRoundTrip(t *testing.T) {
+	for _, message := range []Message{
+		Message{
+			ID:    0x1234,
+			Flags: 0x0100,
+			Question: []Question{
+				{
+					Name:  mustParseName("www.example.com"),
+					Type:  1,
+					Class: 1,
+				},
+				{
+					Name:  mustParseName("www2.example.com"),
+					Type:  2,
+					Class: 2,
+				},
+			},
+			Answer: []RR{
+				{
+					Name:  mustParseName("abc"),
+					Type:  2,
+					Class: 3,
+					TTL:   0xffffffff,
+					Data:  []byte{1},
+				},
+				{
+					Name:  mustParseName("xyz"),
+					Type:  2,
+					Class: 3,
+					TTL:   255,
+					Data:  []byte{},
+				},
+			},
+			Authority: []RR{
+				{
+					Name:  mustParseName("."),
+					Type:  65535,
+					Class: 65535,
+					TTL:   0,
+					Data:  []byte("XXXXXXXXXXXXXXXXXXX"),
+				},
+			},
+			Additional: []RR{},
+		},
+	} {
+		buf, err := message.WireFormat()
+		if err != nil {
+			t.Errorf("%+v cannot make wire format: %v", message, err)
+			continue
+		}
+		message2, err := MessageFromWireFormat(buf)
+		if err != nil {
+			t.Errorf("%+q cannot parse wire format: %v", buf, err)
+			continue
+		}
+		if !messagesEqual(&message, &message2) {
+			t.Errorf("messages unequal\nbefore: %+v\n after: %+v", message, message2)
+			continue
+		}
+	}
+}

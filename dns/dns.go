@@ -36,6 +36,10 @@ var (
 	// ErrTrailingBytes is the error returned when bytes remain in the parse
 	// buffer after parsing a message.
 	ErrTrailingBytes = errors.New("trailing bytes after message")
+
+	// ErrIntegerOverflow is the error returned when trying to encode an
+	// integer greater than 65535 into a 16-bit field.
+	ErrIntegerOverflow = errors.New("integer overflow")
 )
 
 // Name represents a domain name, a sequence of labels each of which is 63
@@ -52,7 +56,6 @@ func NewName(labels [][]byte) (Name, error) {
 	// Various objects and parameters in the DNS have size limits.
 	//   labels          63 octets or less
 	//   names           255 octets or less
-	totalLen := 1 // "...a domain name is terminated by a length byte of zero."
 	for _, label := range labels {
 		if len(label) == 0 {
 			return nil, ErrZeroLengthLabel
@@ -60,10 +63,12 @@ func NewName(labels [][]byte) (Name, error) {
 		if len(label) > 63 {
 			return nil, ErrLabelTooLong
 		}
-		totalLen += 1 + len(label)
-		if totalLen > 255 {
-			return nil, ErrNameTooLong
-		}
+	}
+	// Check the total length.
+	var buf bytes.Buffer
+	writeName(&buf, name)
+	if len(buf.Bytes()) > 255 {
+		return nil, ErrNameTooLong
 	}
 	return name, nil
 }
@@ -319,4 +324,91 @@ func MessageFromWireFormat(buf []byte) (Message, error) {
 		err = io.ErrUnexpectedEOF
 	}
 	return message, err
+}
+
+func writeName(w *bytes.Buffer, name Name) {
+	// https://tools.ietf.org/html/rfc1035#section-3.1
+	for _, label := range name {
+		length := len(label)
+		if length == 0 || length > 63 {
+			panic(length)
+		}
+		w.WriteByte(byte(length))
+		w.Write(label)
+	}
+	w.WriteByte(0)
+}
+
+func writeQuestion(w *bytes.Buffer, question *Question) error {
+	// https://tools.ietf.org/html/rfc1035#section-4.1.2
+	writeName(w, question.Name)
+	binary.Write(w, binary.BigEndian, question.Type)
+	binary.Write(w, binary.BigEndian, question.Class)
+	return nil
+}
+
+func writeRR(w *bytes.Buffer, rr *RR) error {
+	// https://tools.ietf.org/html/rfc1035#section-4.1.3
+	writeName(w, rr.Name)
+	binary.Write(w, binary.BigEndian, rr.Type)
+	binary.Write(w, binary.BigEndian, rr.Class)
+	binary.Write(w, binary.BigEndian, rr.TTL)
+	rdLength := uint16(len(rr.Data))
+	if int(rdLength) != len(rr.Data) {
+		return ErrIntegerOverflow
+	}
+	binary.Write(w, binary.BigEndian, rdLength)
+	w.Write(rr.Data)
+	return nil
+}
+
+func writeMessage(w *bytes.Buffer, message *Message) error {
+	// Header section
+	// https://tools.ietf.org/html/rfc1035#section-4.1.1
+	binary.Write(w, binary.BigEndian, message.ID)
+	binary.Write(w, binary.BigEndian, message.Flags)
+	for _, count := range []int{
+		len(message.Question),
+		len(message.Answer),
+		len(message.Authority),
+		len(message.Additional),
+	} {
+		count16 := uint16(count)
+		if int(count16) != count {
+			return ErrIntegerOverflow
+		}
+		binary.Write(w, binary.BigEndian, count16)
+	}
+
+	// Question section
+	// https://tools.ietf.org/html/rfc1035#section-4.1.2
+	for _, question := range message.Question {
+		err := writeQuestion(w, &question)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Answer, Authority, and Additional sections
+	// https://tools.ietf.org/html/rfc1035#section-4.1.3
+	for _, rrs := range [][]RR{message.Answer, message.Authority, message.Additional} {
+		for _, rr := range rrs {
+			err := writeRR(w, &rr)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// WireFormat encodes a Message as a slice of bytes in wire format.
+func (message *Message) WireFormat() ([]byte, error) {
+	var buf bytes.Buffer
+	err := writeMessage(&buf, message)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
