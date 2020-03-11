@@ -440,3 +440,48 @@ func (message *Message) WireFormat() ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// DecodeRDataTXT decodes TXT-DATA (as found in the RDATA for a resource record
+// with TYPE=TXT) as a raw byte slice, by concatenating all the
+// <character-string>s it contains.
+func DecodeRDataTXT(p []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	for {
+		if len(p) == 0 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		n := int(p[0])
+		p = p[1:]
+		if len(p) < n {
+			return nil, io.ErrUnexpectedEOF
+		}
+		buf.Write(p[:n])
+		p = p[n:]
+		if len(p) == 0 {
+			break
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+// EncodeRDataTXT encodes a slice of bytes as TXT-DATA, as appropriate for the
+// RDATA of a resource record with TYPE=TXT. There is no length restriction;
+// that must be checked at a higher level.
+func EncodeRDataTXT(p []byte) []byte {
+	// https://tools.ietf.org/html/rfc1035#section-3.3
+	// https://tools.ietf.org/html/rfc1035#section-3.3.14
+	// TXT data is a sequence of one or more <character-string>s, where
+	// <character-string> is a length octet followed by that number of
+	// octets.
+	var buf bytes.Buffer
+	for len(p) > 255 {
+		buf.WriteByte(255)
+		buf.Write(p[:255])
+		p = p[255:]
+	}
+	// Must write here, even if len(p) == 0, because it's "*one or more*
+	// <character-string>s".
+	buf.WriteByte(byte(len(p)))
+	buf.Write(p)
+	return buf.Bytes()
+}

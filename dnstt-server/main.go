@@ -19,6 +19,7 @@ import (
 
 const (
 	idleTimeout = 10 * time.Minute
+	responseTTL = 60
 )
 
 // A base32 encoding without padding.
@@ -118,7 +119,7 @@ func acceptSessions(ln *kcp.Listener, mtu int, upstream *net.TCPAddr) error {
 	}
 }
 
-func responseFor(query *dns.Message, domain dns.Name) *dns.Message {
+func responseFor(query *dns.Message, domain dns.Name, ttConn *turbotunnel.QueuePacketConn) *dns.Message {
 	resp := &dns.Message{
 		ID:       query.ID,
 		Flags:    0x8400, // QR = 1, AA = 1, RCODE = no error
@@ -154,32 +155,64 @@ func responseFor(query *dns.Message, domain dns.Name) *dns.Message {
 	}
 
 	encoded := bytes.ToUpper(bytes.Join(prefix, nil))
-	decoded := make([]byte, base32Encoding.DecodedLen(len(encoded)))
-	n, err := base32Encoding.Decode(decoded, encoded)
+	payload := make([]byte, base32Encoding.DecodedLen(len(encoded)))
+	n, err := base32Encoding.Decode(payload, encoded)
 	if err != nil {
 		// Base32 error, make like the name doesn't exist.
 		resp.Flags |= dns.RcodeNameError
 		return resp
 	}
-	decoded = decoded[:n]
-	fmt.Printf("%x\n", decoded)
+	payload = payload[:n]
 
-	return nil
+	// Now extract the ClientID. The ClientID is of a 4-byte string, plus
+	// the 4-byte KCP conversation ID, which is at the beginning of a KCP
+	// packet. We take the first 8 bytes, then trim the first 4 bytes and
+	// pass the rest to KCP.
+	var clientID turbotunnel.ClientID
+	n = copy(clientID[:], payload)
+	if n < len(clientID) {
+		// Payload is not long enough to contain a ClientID.
+		resp.Flags |= dns.RcodeNameError
+		return resp
+	}
+	p := payload[4:]
+
+	// Feed the incoming packet to KCP. If there is nothing after the
+	// conversation ID, this is an empty polling request and we don't need
+	// to give it to KCP.
+	if len(p) > 4 {
+		ttConn.QueueIncoming(p, clientID)
+	}
+
+	// Send a downstream packet if any is available.
+	// TODO: can bundle multiple packets here.
+	select {
+	case p := <-ttConn.OutgoingQueue(clientID):
+		resp.Answer = append(resp.Answer, dns.RR{
+			Name: question.Name,
+			Type: dns.RRTypeTXT,
+			TTL:  responseTTL,
+			Data: dns.EncodeRDataTXT(p),
+		})
+	default:
+	}
+
+	return resp
 }
 
-func handle(c net.PacketConn, p []byte, addr net.Addr, domain dns.Name) error {
+func handle(p []byte, addr net.Addr, dnsConn net.PacketConn, domain dns.Name, ttConn *turbotunnel.QueuePacketConn) error {
 	query, err := dns.MessageFromWireFormat(p)
 	if err != nil {
 		return fmt.Errorf("parsing DNS query: %v", err)
 	}
 
-	resp := responseFor(&query, domain)
+	resp := responseFor(&query, domain, ttConn)
 	if resp != nil {
 		buf, err := resp.WireFormat()
 		if err != nil {
 			return err
 		}
-		_, err = c.WriteTo(buf, addr)
+		_, err = dnsConn.WriteTo(buf, addr)
 		if err != nil {
 			return err
 		}
@@ -188,7 +221,7 @@ func handle(c net.PacketConn, p []byte, addr net.Addr, domain dns.Name) error {
 	return nil
 }
 
-func loop(c net.PacketConn, domain dns.Name) error {
+func loop(dnsConn net.PacketConn, domain dns.Name, ttConn *turbotunnel.QueuePacketConn) error {
 	type taggedPacket struct {
 		P    []byte
 		Addr net.Addr
@@ -200,7 +233,7 @@ func loop(c net.PacketConn, domain dns.Name) error {
 		for tp := range handleChan {
 			p := tp.P
 			addr := tp.Addr
-			err := handle(c, p, addr, domain)
+			err := handle(p, addr, dnsConn, domain, ttConn)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "handle from %v: %v\n", addr, err)
 			}
@@ -210,7 +243,7 @@ func loop(c net.PacketConn, domain dns.Name) error {
 	for {
 		// One byte longer than we want, to check for truncation.
 		var buf [513]byte
-		n, addr, err := c.ReadFrom(buf[:])
+		n, addr, err := dnsConn.ReadFrom(buf[:])
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
 				continue
@@ -239,14 +272,14 @@ func (addr dummyAddr) String() string  { return "dummy" }
 
 func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	// Start up the virtual PacketConn for turbotunnel.
-	pconn := turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout*2)
-	ln, err := kcp.ServeConn(nil, 0, 0, pconn)
+	ttConn := turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout*2)
+	ln, err := kcp.ServeConn(nil, 0, 0, ttConn)
 	if err != nil {
 		return fmt.Errorf("opening KCP listener: %v", err)
 	}
 	defer ln.Close()
 	go func() {
-		err := acceptSessions(ln, 120, upstream.(*net.TCPAddr)) // TODO: MTU appropriate for length of domain
+		err := acceptSessions(ln, 300, upstream.(*net.TCPAddr)) // TODO: MTU appropriate for length of domain
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "acceptSessions: %v\n", err)
 		}
@@ -255,15 +288,15 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	var wg sync.WaitGroup
 
 	if udpAddr != "" {
-		c, err := net.ListenPacket("udp", udpAddr)
+		dnsConn, err := net.ListenPacket("udp", udpAddr)
 		if err != nil {
 			return fmt.Errorf("opening UDP listener: %v", err)
 		}
 		wg.Add(1)
 		go func() {
-			defer c.Close()
+			defer dnsConn.Close()
 			defer wg.Done()
-			err := loop(c, domain)
+			err := loop(dnsConn, domain, ttConn)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error in UDP loop: %v\n", err)
 			}
