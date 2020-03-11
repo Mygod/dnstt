@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base32"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +20,9 @@ import (
 const (
 	idleTimeout = 10 * time.Minute
 )
+
+// A base32 encoding without padding.
+var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // handleStream bidirectionally connects a client stream with the ORPort.
 func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
@@ -113,15 +118,74 @@ func acceptSessions(ln *kcp.Listener, mtu int, upstream *net.TCPAddr) error {
 	}
 }
 
-func handle(c net.PacketConn, p []byte, addr net.Addr) error {
-	fmt.Printf("handle %v %x\n", addr, p)
-	message, err := dns.MessageFromWireFormat(p)
-	if err != nil {
-		return err
+func responseFor(query *dns.Message, domain dns.Name) *dns.Message {
+	resp := &dns.Message{
+		ID:       query.ID,
+		Flags:    0x8400, // QR = 1, AA = 1, RCODE = no error
+		Question: query.Question,
 	}
-	fmt.Printf("%#v\n", message)
-	_, err = c.WriteTo([]byte("hello"), addr)
-	return err
+
+	if query.Flags&0x8000 != 0 {
+		// QR != 0, this is not a query. Don't even send a response.
+		return nil
+	}
+	if query.Flags&0x7800 != 0 {
+		// We don't support OPCODE != QUERY.
+		resp.Flags |= dns.RcodeNotImplemented
+		return resp
+	}
+
+	if len(query.Question) != 1 {
+		// There must be exactly one question.
+		resp.Flags |= dns.RcodeFormatError
+		return resp
+	}
+	question := query.Question[0]
+	if question.Type != dns.RRTypeTXT {
+		// We only support QTYPE == TXT. Send an empty response.
+		return resp
+	}
+
+	prefix, ok := question.Name.TrimSuffix(domain)
+	if !ok {
+		// Not a name we are authoritative for.
+		resp.Flags |= dns.RcodeNameError
+		return resp
+	}
+
+	encoded := bytes.ToUpper(bytes.Join(prefix, nil))
+	decoded := make([]byte, base32Encoding.DecodedLen(len(encoded)))
+	n, err := base32Encoding.Decode(decoded, encoded)
+	if err != nil {
+		// Base32 error, make like the name doesn't exist.
+		resp.Flags |= dns.RcodeNameError
+		return resp
+	}
+	decoded = decoded[:n]
+	fmt.Printf("%x\n", decoded)
+
+	return nil
+}
+
+func handle(c net.PacketConn, p []byte, addr net.Addr, domain dns.Name) error {
+	query, err := dns.MessageFromWireFormat(p)
+	if err != nil {
+		return fmt.Errorf("parsing DNS query: %v", err)
+	}
+
+	resp := responseFor(&query, domain)
+	if resp != nil {
+		buf, err := resp.WireFormat()
+		if err != nil {
+			return err
+		}
+		_, err = c.WriteTo(buf, addr)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func loop(c net.PacketConn, domain dns.Name) error {
@@ -136,7 +200,7 @@ func loop(c net.PacketConn, domain dns.Name) error {
 		for tp := range handleChan {
 			p := tp.P
 			addr := tp.Addr
-			err := handle(c, p, addr)
+			err := handle(c, p, addr, domain)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "handle from %v: %v\n", addr, err)
 			}

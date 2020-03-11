@@ -42,6 +42,17 @@ var (
 	ErrIntegerOverflow = errors.New("integer overflow")
 )
 
+const (
+	// https://tools.ietf.org/html/rfc1035#section-3.2.2
+	RRTypeTXT = 16
+
+	// https://tools.ietf.org/html/rfc1035#section-4.1.1
+	RcodeNoError        = 0
+	RcodeFormatError    = 1
+	RcodeNameError      = 3 // a.k.a. NXDOMAIN
+	RcodeNotImplemented = 4
+)
+
 // Name represents a domain name, a sequence of labels each of which is 63
 // octets or less in length.
 //
@@ -95,6 +106,23 @@ func (name Name) String() string {
 	} else {
 		return string(bytes.Join(name, []byte(".")))
 	}
+}
+
+// TrimSuffix returns a Name with the given suffix removed, if it was present.
+// The second return value indicates whether the suffix was present. If the
+// suffix was not present, the first return value is nil.
+func (name Name) TrimSuffix(suffix Name) (Name, bool) {
+	if len(name) < len(suffix) {
+		return nil, false
+	}
+	split := len(name) - len(suffix)
+	fore, aft := name[:split], name[split:]
+	for i := 0; i < len(aft); i++ {
+		if !bytes.Equal(bytes.ToLower(aft[i]), bytes.ToLower(suffix[i])) {
+			return nil, false
+		}
+	}
+	return fore, true
 }
 
 // Message represents a DNS message.

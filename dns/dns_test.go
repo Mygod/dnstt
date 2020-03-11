@@ -151,6 +151,37 @@ func TestParseName(t *testing.T) {
 	}
 }
 
+func TestNameTrimSuffix(t *testing.T) {
+	for _, test := range []struct {
+		name, suffix string
+		trimmed      string
+		ok           bool
+	}{
+		{"", "", ".", true},
+		{".", ".", ".", true},
+		{"abc", "", "abc", true},
+		{"abc", ".", "abc", true},
+		{"", "abc", ".", false},
+		{".", "abc", ".", false},
+		{"example.com", "com", "example", true},
+		{"example.com", "net", ".", false},
+		{"example.com", "example.com", ".", true},
+		{"example.com", "test.com", ".", false},
+		{"example.com", "xample.com", ".", false},
+		{"example.com", "example", ".", false},
+		{"example.com", "COM", "example", true},
+		{"EXAMPLE.COM", "com", "EXAMPLE", true},
+	} {
+		tmp, ok := mustParseName(test.name).TrimSuffix(mustParseName(test.suffix))
+		trimmed := tmp.String()
+		if ok != test.ok || trimmed != test.trimmed {
+			t.Errorf("TrimSuffix %+q %+q returned (%+q, %v), expected (%+q, %v)",
+				test.name, test.suffix, trimmed, ok, test.trimmed, test.ok)
+			continue
+		}
+	}
+}
+
 func TestReadName(t *testing.T) {
 	// Good tests.
 	for _, test := range []struct {
