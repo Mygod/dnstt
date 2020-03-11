@@ -75,7 +75,8 @@ type clientMapInner struct {
 // than timeout in the past.
 func (inner *clientMapInner) removeExpired(now time.Time, timeout time.Duration) {
 	for len(inner.byAge) > 0 && now.Sub(inner.byAge[0].LastSeen) >= timeout {
-		heap.Pop(inner)
+		record := heap.Pop(inner).(*clientRecord)
+		close(record.SendQueue)
 	}
 }
 
