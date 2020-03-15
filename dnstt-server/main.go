@@ -310,11 +310,15 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 func main() {
 	var udpAddr string
 
-	flag.StringVar(&udpAddr, "udp", "", "UDP port to listen on")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s -udp ADDR DOMAIN UPSTREAMADDR\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on")
 	flag.Parse()
 
 	if flag.NArg() != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s -udp ADDR DOMAIN UPSTREAMADDR\n", os.Args[0])
+		flag.Usage()
 		os.Exit(1)
 	}
 	domain, err := dns.ParseName(flag.Arg(0))
