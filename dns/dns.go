@@ -46,6 +46,9 @@ const (
 	// https://tools.ietf.org/html/rfc1035#section-3.2.2
 	RRTypeTXT = 16
 
+	// https://tools.ietf.org/html/rfc1035#section-3.2.4
+	ClassIN = 1
+
 	// https://tools.ietf.org/html/rfc1035#section-4.1.1
 	RcodeNoError        = 0
 	RcodeFormatError    = 1

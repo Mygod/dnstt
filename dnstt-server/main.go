@@ -164,8 +164,8 @@ func responseFor(query *dns.Message, domain dns.Name, ttConn *turbotunnel.QueueP
 	}
 	payload = payload[:n]
 
-	// Now extract the ClientID. The ClientID is of a 4-byte string, plus
-	// the 4-byte KCP conversation ID, which is at the beginning of a KCP
+	// Now extract the ClientID. The ClientID is a 4-byte string, plus the
+	// 4-byte KCP conversation ID, which is at the beginning of a KCP
 	// packet. We take the first 8 bytes, then trim the first 4 bytes and
 	// pass the rest to KCP.
 	var clientID turbotunnel.ClientID
