@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"sync"
@@ -119,6 +120,33 @@ func acceptSessions(ln *kcp.Listener, mtu int, upstream *net.TCPAddr) error {
 	}
 }
 
+func nextPacket(r *bytes.Reader) ([]byte, error) {
+	eof := func(err error) error {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+
+	for {
+		prefix, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		if prefix >= 224 {
+			paddingLen := prefix - 224
+			_, err := io.CopyN(ioutil.Discard, r, int64(paddingLen))
+			if err != nil {
+				return nil, eof(err)
+			}
+			continue
+		}
+		p := make([]byte, int(prefix))
+		_, err = io.ReadFull(r, p)
+		return p, eof(err)
+	}
+}
+
 func responseFor(query *dns.Message, domain dns.Name, ttConn *turbotunnel.QueuePacketConn) *dns.Message {
 	resp := &dns.Message{
 		ID:       query.ID,
@@ -172,13 +200,16 @@ func responseFor(query *dns.Message, domain dns.Name, ttConn *turbotunnel.QueueP
 		resp.Flags |= dns.RcodeNameError
 		return resp
 	}
-	p := payload[len(clientID):]
 
-	// Feed the incoming packet to KCP. If there is nothing after the
-	// conversation ID, this is an empty polling request and we don't need
-	// to give it to KCP.
-	if len(p) > 0 {
+	// Discard padding and pull out the packets contained in the payload.
+	buf := bytes.NewReader(payload[len(clientID):])
+	for {
+		p, err := nextPacket(buf)
+		// Feed the incoming packet to KCP.
 		ttConn.QueueIncoming(p, clientID)
+		if err != nil {
+			break
+		}
 	}
 
 	// Send a downstream packet if any is available.

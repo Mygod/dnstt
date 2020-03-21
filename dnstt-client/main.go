@@ -24,6 +24,8 @@ const (
 	initPollDelay       = 100 * time.Millisecond
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
+	// How many bytes of random padding to insert into queries.
+	numPadding = 3
 )
 
 // A base32 encoding without padding.
@@ -96,9 +98,25 @@ func NewDNSPacketConn(conn net.PacketConn, addr net.Addr, domain dns.Name) *DNSP
 
 // send sends a single packet in a DNS query.
 func (c *DNSPacketConn) send(p []byte, addr net.Addr) error {
-	p = bytes.Join([][]byte{c.clientID[:], p}, nil)
-	encoded := make([]byte, base32Encoding.EncodedLen(len(p)))
-	base32Encoding.Encode(encoded, p)
+	var decoded []byte
+	{
+		if len(p) >= 224 {
+			return fmt.Errorf("too long")
+		}
+		var buf bytes.Buffer
+		// ClientID
+		buf.Write(c.clientID[:])
+		// Padding / cache inhibition
+		buf.WriteByte(224 + numPadding)
+		io.CopyN(&buf, rand.Reader, numPadding)
+		// Packet contents
+		buf.WriteByte(byte(len(p)))
+		buf.Write(p)
+		decoded = buf.Bytes()
+	}
+
+	encoded := make([]byte, base32Encoding.EncodedLen(len(decoded)))
+	base32Encoding.Encode(encoded, decoded)
 	labels := chunks(encoded, 63)
 	labels = append(labels, c.domain...)
 	name, err := dns.NewName(labels)
@@ -291,7 +309,7 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 			0, // default resend
 			1, // nc=1 => congestion window off
 		)
-		mtu := dnsNameCapacity(domain) - 8 // clientid
+		mtu := dnsNameCapacity(domain) - 8 - 1 - numPadding - 1 // clientid + padding length prefix + padding + data length prefix
 		if mtu < 80 {
 			return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
 		}
