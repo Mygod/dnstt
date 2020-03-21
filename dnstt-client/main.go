@@ -239,6 +239,25 @@ func handle(local *net.TCPConn, sess *smux.Session) error {
 	return err
 }
 
+// dnsNameCapacity returns the number of bytes remaining for encoded data after
+// including domain in a DNS name.
+func dnsNameCapacity(domain dns.Name) int {
+	// https://tools.ietf.org/html/rfc1035#section-2.3.4
+	// Names must be 255 octets or shorter in total length.
+	capacity := 255
+	// Subtract the length of the null terminator.
+	capacity -= 1
+	for _, label := range domain {
+		// Subtract the length of the label and the length octet.
+		capacity -= len(label) + 1
+	}
+	// Each label may be up to 63 bytes long and requires 64
+	capacity = capacity * 63 / 64
+	// Base32 expands every 5 bytes to 8.
+	capacity = capacity * 5 / 8
+	return capacity
+}
+
 func run(domain dns.Name, localAddr, udpAddr string) error {
 	var sess *smux.Session
 
@@ -272,7 +291,12 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 			0, // default resend
 			1, // nc=1 => congestion window off
 		)
-		conn.SetMtu(100) // TODO: MTU appropriate for length of domain
+		mtu := dnsNameCapacity(domain) - 8 // clientid
+		if mtu < 80 {
+			return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
+		}
+		fmt.Printf("MTU %d\n", mtu)
+		conn.SetMtu(mtu)
 
 		// Start a smux session on the KCP conn.
 		smuxConfig := smux.DefaultConfig()
