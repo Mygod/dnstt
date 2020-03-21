@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	idleTimeout = 10 * time.Minute
-	pollDelay   = 5 * time.Second
+	idleTimeout         = 10 * time.Minute
+	initPollDelay       = 100 * time.Millisecond
+	maxPollDelay        = 10 * time.Second
+	pollDelayMultiplier = 2.0
 )
 
 // A base32 encoding without padding.
@@ -127,6 +129,7 @@ func (c *DNSPacketConn) send(p []byte, addr net.Addr) error {
 }
 
 func (c *DNSPacketConn) sendLoop(addr net.Addr) {
+	pollDelay := initPollDelay
 	pollTimer := time.NewTimer(pollDelay)
 	for {
 		var p []byte
@@ -139,8 +142,13 @@ func (c *DNSPacketConn) sendLoop(addr net.Addr) {
 			if !pollTimer.Stop() {
 				<-pollTimer.C
 			}
+			pollDelay = initPollDelay
 		case <-pollTimer.C:
 			p = nil
+			pollDelay = time.Duration(float64(pollDelay) * pollDelayMultiplier)
+			if pollDelay > maxPollDelay {
+				pollDelay = maxPollDelay
+			}
 		}
 		pollTimer.Reset(pollDelay)
 		err := c.send(p, addr)
