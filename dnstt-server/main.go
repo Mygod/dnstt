@@ -267,6 +267,31 @@ type dummyAddr struct{}
 func (addr dummyAddr) Network() string { return "dummy" }
 func (addr dummyAddr) String() string  { return "dummy" }
 
+func dnsMessageCapacity() int {
+	longName, err := dns.NewName([][]byte{
+		bytes.Repeat([]byte{'a'}, 63),
+		bytes.Repeat([]byte{'b'}, 63),
+		bytes.Repeat([]byte{'c'}, 63),
+		bytes.Repeat([]byte{'d'}, 61),
+	})
+	if err != nil {
+		panic(err)
+	}
+	message := dns.Message{
+		Question: []dns.Question{
+			dns.Question{Name: longName},
+		},
+		Answer: []dns.RR{
+			dns.RR{Name: longName},
+		},
+	}
+	builder, err := message.WireFormat()
+	if err != nil {
+		panic(err)
+	}
+	return (512 - len(builder)) * 255 / 256
+}
+
 func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout*2)
@@ -275,8 +300,12 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 		return fmt.Errorf("opening KCP listener: %v", err)
 	}
 	defer ln.Close()
+	mtu := dnsMessageCapacity()
+	if mtu < 80 {
+		return fmt.Errorf("too little space (%d) for downstream payload", mtu)
+	}
 	go func() {
-		err := acceptSessions(ln, 300, upstream.(*net.TCPAddr)) // TODO: MTU appropriate for length of domain
+		err := acceptSessions(ln, mtu, upstream.(*net.TCPAddr))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "acceptSessions: %v\n", err)
 		}
