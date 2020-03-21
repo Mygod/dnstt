@@ -79,9 +79,9 @@ func NewName(labels [][]byte) (Name, error) {
 		}
 	}
 	// Check the total length.
-	var buf bytes.Buffer
-	writeName(&buf, name)
-	if len(buf.Bytes()) > 255 {
+	builder := newMessageBuilder()
+	builder.writeName(name)
+	if len(builder.Bytes()) > 255 {
 		return nil, ErrNameTooLong
 	}
 	return name, nil
@@ -357,47 +357,71 @@ func MessageFromWireFormat(buf []byte) (Message, error) {
 	return message, err
 }
 
-func writeName(w *bytes.Buffer, name Name) {
+type messageBuilder struct {
+	w         bytes.Buffer
+	nameCache map[string]int
+}
+
+func newMessageBuilder() *messageBuilder {
+	return &messageBuilder{
+		nameCache: make(map[string]int),
+	}
+}
+
+func (builder *messageBuilder) Bytes() []byte {
+	return builder.w.Bytes()
+}
+
+func (builder *messageBuilder) writeName(name Name) {
 	// https://tools.ietf.org/html/rfc1035#section-3.1
-	for _, label := range name {
-		length := len(label)
+	for i := range name {
+		// Has this suffix already been encoded in the message?
+		if ptr, ok := builder.nameCache[name[i:].String()]; ok && ptr&0x3fff == ptr {
+			// If so, we can write a compression pointer.
+			binary.Write(&builder.w, binary.BigEndian, uint16(0xc000 | ptr))
+			return
+		}
+		// Not cached; we must encode this label verbatim. Store a cache
+		// entry pointing to the beginning of it.
+		builder.nameCache[name[i:].String()] = builder.w.Len()
+		length := len(name[i])
 		if length == 0 || length > 63 {
 			panic(length)
 		}
-		w.WriteByte(byte(length))
-		w.Write(label)
+		builder.w.WriteByte(byte(length))
+		builder.w.Write(name[i])
 	}
-	w.WriteByte(0)
+	builder.w.WriteByte(0)
 }
 
-func writeQuestion(w *bytes.Buffer, question *Question) error {
+func (builder *messageBuilder) writeQuestion(question *Question) error {
 	// https://tools.ietf.org/html/rfc1035#section-4.1.2
-	writeName(w, question.Name)
-	binary.Write(w, binary.BigEndian, question.Type)
-	binary.Write(w, binary.BigEndian, question.Class)
+	builder.writeName(question.Name)
+	binary.Write(&builder.w, binary.BigEndian, question.Type)
+	binary.Write(&builder.w, binary.BigEndian, question.Class)
 	return nil
 }
 
-func writeRR(w *bytes.Buffer, rr *RR) error {
+func (builder *messageBuilder) writeRR(rr *RR) error {
 	// https://tools.ietf.org/html/rfc1035#section-4.1.3
-	writeName(w, rr.Name)
-	binary.Write(w, binary.BigEndian, rr.Type)
-	binary.Write(w, binary.BigEndian, rr.Class)
-	binary.Write(w, binary.BigEndian, rr.TTL)
+	builder.writeName(rr.Name)
+	binary.Write(&builder.w, binary.BigEndian, rr.Type)
+	binary.Write(&builder.w, binary.BigEndian, rr.Class)
+	binary.Write(&builder.w, binary.BigEndian, rr.TTL)
 	rdLength := uint16(len(rr.Data))
 	if int(rdLength) != len(rr.Data) {
 		return ErrIntegerOverflow
 	}
-	binary.Write(w, binary.BigEndian, rdLength)
-	w.Write(rr.Data)
+	binary.Write(&builder.w, binary.BigEndian, rdLength)
+	builder.w.Write(rr.Data)
 	return nil
 }
 
-func writeMessage(w *bytes.Buffer, message *Message) error {
+func (builder *messageBuilder) writeMessage(message *Message) error {
 	// Header section
 	// https://tools.ietf.org/html/rfc1035#section-4.1.1
-	binary.Write(w, binary.BigEndian, message.ID)
-	binary.Write(w, binary.BigEndian, message.Flags)
+	binary.Write(&builder.w, binary.BigEndian, message.ID)
+	binary.Write(&builder.w, binary.BigEndian, message.Flags)
 	for _, count := range []int{
 		len(message.Question),
 		len(message.Answer),
@@ -408,13 +432,13 @@ func writeMessage(w *bytes.Buffer, message *Message) error {
 		if int(count16) != count {
 			return ErrIntegerOverflow
 		}
-		binary.Write(w, binary.BigEndian, count16)
+		binary.Write(&builder.w, binary.BigEndian, count16)
 	}
 
 	// Question section
 	// https://tools.ietf.org/html/rfc1035#section-4.1.2
 	for _, question := range message.Question {
-		err := writeQuestion(w, &question)
+		err := builder.writeQuestion(&question)
 		if err != nil {
 			return err
 		}
@@ -424,7 +448,7 @@ func writeMessage(w *bytes.Buffer, message *Message) error {
 	// https://tools.ietf.org/html/rfc1035#section-4.1.3
 	for _, rrs := range [][]RR{message.Answer, message.Authority, message.Additional} {
 		for _, rr := range rrs {
-			err := writeRR(w, &rr)
+			err := builder.writeRR(&rr)
 			if err != nil {
 				return err
 			}
@@ -436,12 +460,12 @@ func writeMessage(w *bytes.Buffer, message *Message) error {
 
 // WireFormat encodes a Message as a slice of bytes in wire format.
 func (message *Message) WireFormat() ([]byte, error) {
-	var buf bytes.Buffer
-	err := writeMessage(&buf, message)
+	builder := newMessageBuilder()
+	err := builder.writeMessage(message)
 	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return builder.Bytes(), nil
 }
 
 // DecodeRDataTXT decodes TXT-DATA (as found in the RDATA for a resource record
