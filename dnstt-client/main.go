@@ -21,6 +21,7 @@ import (
 
 const (
 	idleTimeout = 10 * time.Minute
+	pollDelay   = 5 * time.Second
 )
 
 // A base32 encoding without padding.
@@ -72,9 +73,9 @@ func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
 }
 
 type DNSPacketConn struct {
-	clientID turbotunnel.ClientID
-	domain   dns.Name
-	poll     chan struct{}
+	clientID  turbotunnel.ClientID
+	domain    dns.Name
+	sendQueue chan []byte
 	net.PacketConn
 }
 
@@ -84,9 +85,69 @@ func NewDNSPacketConn(conn net.PacketConn, addr net.Addr, domain dns.Name) *DNSP
 	pconn := &DNSPacketConn{
 		clientID:   clientID,
 		domain:     domain,
+		sendQueue:  make(chan []byte, 8),
 		PacketConn: conn,
 	}
+	go pconn.sendLoop(addr)
 	return pconn
+}
+
+// send sends a single packet in a DNS query.
+func (c *DNSPacketConn) send(p []byte, addr net.Addr) error {
+	p = bytes.Join([][]byte{c.clientID[:], p}, nil)
+	encoded := make([]byte, base32Encoding.EncodedLen(len(p)))
+	base32Encoding.Encode(encoded, p)
+	labels := chunks(encoded, 63)
+	labels = append(labels, c.domain...)
+	name, err := dns.NewName(labels)
+	if err != nil {
+		return err
+	}
+
+	var id uint16
+	binary.Read(rand.Reader, binary.BigEndian, &id)
+	query := &dns.Message{
+		ID:    id,
+		Flags: 0x0100, // QR = 0, RD = 1
+		Question: []dns.Question{
+			{
+				Name:  name,
+				Type:  dns.RRTypeTXT,
+				Class: dns.ClassIN,
+			},
+		},
+	}
+	buf, err := query.WireFormat()
+	if err != nil {
+		return err
+	}
+
+	_, err = c.PacketConn.WriteTo(buf, addr)
+	return err
+}
+
+func (c *DNSPacketConn) sendLoop(addr net.Addr) {
+	pollTimer := time.NewTimer(pollDelay)
+	for {
+		var p []byte
+		var ok bool
+		select {
+		case p, ok = <-c.sendQueue:
+			if !ok {
+				return
+			}
+			if !pollTimer.Stop() {
+				<-pollTimer.C
+			}
+		case <-pollTimer.C:
+			p = nil
+		}
+		pollTimer.Reset(pollDelay)
+		err := c.send(p, addr)
+		if err != nil {
+			continue
+		}
+	}
 }
 
 func (c *DNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -107,39 +168,36 @@ func (c *DNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		if payload == nil {
 			continue
 		}
+		// Reading anything gives us license to poll immediately.
+		if len(payload) > 0 {
+			select {
+			case c.sendQueue <- nil:
+			default:
+			}
+		}
 		return copy(p, payload), addr, nil
 	}
 }
 
 func (c *DNSPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	payload := bytes.Join([][]byte{c.clientID[:], p}, nil)
-	encoded := make([]byte, base32Encoding.EncodedLen(len(payload)))
-	base32Encoding.Encode(encoded, payload)
-	labels := chunks(encoded, 63)
-	labels = append(labels, c.domain...)
-	name, err := dns.NewName(labels)
-	if err != nil {
-		return 0, err
+	// addr is ignored.
+	// Copy the slice so that the caller may reuse it.
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	select {
+	case c.sendQueue <- buf:
+	default:
 	}
+	return len(buf), nil
+}
 
-	var id uint16
-	binary.Read(rand.Reader, binary.BigEndian, &id)
-	query := &dns.Message{
-		ID:    id,
-		Flags: 0x0100, // QR = 0, RD = 1
-		Question: []dns.Question{
-			{
-				Name:  name,
-				Type:  dns.RRTypeTXT,
-				Class: dns.ClassIN,
-			},
-		},
+func (c *DNSPacketConn) Close() error {
+	select {
+	case <-c.sendQueue:
+	default:
+		close(c.sendQueue)
 	}
-	buf, err := query.WireFormat()
-	if err != nil {
-		return 0, err
-	}
-	return c.PacketConn.WriteTo(buf, addr)
+	return c.PacketConn.Close()
 }
 
 func handle(local *net.TCPConn, sess *smux.Session) error {
