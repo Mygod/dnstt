@@ -16,6 +16,7 @@ import (
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/smux"
 	"www.bamsoftware.com/git/dnstt.git/dns"
+	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
 const (
@@ -71,9 +72,21 @@ func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
 }
 
 type DNSPacketConn struct {
-	shortClientID [4]byte
-	domain        dns.Name
+	clientID turbotunnel.ClientID
+	domain   dns.Name
+	poll     chan struct{}
 	net.PacketConn
+}
+
+func NewDNSPacketConn(conn net.PacketConn, addr net.Addr, domain dns.Name) *DNSPacketConn {
+	var clientID turbotunnel.ClientID
+	rand.Read(clientID[:])
+	pconn := &DNSPacketConn{
+		clientID:   clientID,
+		domain:     domain,
+		PacketConn: conn,
+	}
+	return pconn
 }
 
 func (c *DNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -99,7 +112,7 @@ func (c *DNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
 }
 
 func (c *DNSPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	payload := bytes.Join([][]byte{c.shortClientID[:], p}, nil)
+	payload := bytes.Join([][]byte{c.clientID[:], p}, nil)
 	encoded := make([]byte, base32Encoding.EncodedLen(len(payload)))
 	base32Encoding.Encode(encoded, payload)
 	labels := chunks(encoded, 63)
@@ -175,9 +188,7 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 		defer dnsConn.Close()
 
 		// Start up the virtual PacketConn for turbotunnel.
-		var shortClientID [4]byte
-		rand.Read(shortClientID[:])
-		pconn := &DNSPacketConn{shortClientID, domain, dnsConn}
+		pconn := NewDNSPacketConn(dnsConn, addr, domain)
 
 		// Open a KCP conn on the PacketConn.
 		conn, err := kcp.NewConn2(addr, nil, 0, 0, pconn)

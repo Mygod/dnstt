@@ -164,10 +164,7 @@ func responseFor(query *dns.Message, domain dns.Name, ttConn *turbotunnel.QueueP
 	}
 	payload = payload[:n]
 
-	// Now extract the ClientID. The ClientID is a 4-byte string, plus the
-	// 4-byte KCP conversation ID, which is at the beginning of a KCP
-	// packet. We take the first 8 bytes, then trim the first 4 bytes and
-	// pass the rest to KCP.
+	// Now extract the ClientID.
 	var clientID turbotunnel.ClientID
 	n = copy(clientID[:], payload)
 	if n < len(clientID) {
@@ -175,12 +172,12 @@ func responseFor(query *dns.Message, domain dns.Name, ttConn *turbotunnel.QueueP
 		resp.Flags |= dns.RcodeNameError
 		return resp
 	}
-	p := payload[4:]
+	p := payload[len(clientID):]
 
 	// Feed the incoming packet to KCP. If there is nothing after the
 	// conversation ID, this is an empty polling request and we don't need
 	// to give it to KCP.
-	if len(p) > 4 {
+	if len(p) > 0 {
 		ttConn.QueueIncoming(p, clientID)
 	}
 
