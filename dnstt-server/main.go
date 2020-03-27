@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -40,7 +41,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
 		defer wg.Done()
 		_, err := io.Copy(stream, conn)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "copy stream←upstream: %v\n", err)
+			log.Printf("copy stream←upstream: %v\n", err)
 		}
 		stream.Close()
 	}()
@@ -49,7 +50,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
 		defer wg.Done()
 		_, err := io.Copy(conn, stream)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "copy upstream←stream: %v\n", err)
+			log.Printf("copy upstream←stream: %v\n", err)
 		}
 		conn.Close()
 	}()
@@ -81,7 +82,7 @@ func acceptStreams(conn *kcp.UDPSession, upstream *net.TCPAddr) error {
 			defer stream.Close()
 			err := handleStream(stream, upstream)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "handleStream: %v\n", err)
+				log.Printf("handleStream: %v\n", err)
 			}
 		}()
 	}
@@ -89,7 +90,7 @@ func acceptStreams(conn *kcp.UDPSession, upstream *net.TCPAddr) error {
 
 // acceptSessions listens for incoming KCP connections and passes them to
 // acceptStreams.
-func acceptSessions(ln *kcp.Listener, mtu int, upstream *net.TCPAddr) error {
+func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
 	for {
 		conn, err := ln.AcceptKCP()
 		if err != nil {
@@ -109,15 +110,46 @@ func acceptSessions(ln *kcp.Listener, mtu int, upstream *net.TCPAddr) error {
 			1, // nc=1 => congestion window off
 		)
 		// Set the maximum transmission unit.
+		mtu := dnsMessageCapacity()
+		if mtu < 80 {
+			// This value doesn't depend on any configuration values, so it
+			// should never be too small.
+			panic("too little space for downstream payload")
+		}
 		conn.SetMtu(mtu)
 		go func() {
 			defer conn.Close()
 			err := acceptStreams(conn, upstream)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "acceptStreams: %v\n", err)
+				log.Printf("acceptStreams: %v\n", err)
 			}
 		}()
 	}
+}
+
+func dnsMessageCapacity() int {
+	longName, err := dns.NewName([][]byte{
+		bytes.Repeat([]byte{'a'}, 63),
+		bytes.Repeat([]byte{'b'}, 63),
+		bytes.Repeat([]byte{'c'}, 63),
+		bytes.Repeat([]byte{'d'}, 61),
+	})
+	if err != nil {
+		panic(err)
+	}
+	message := dns.Message{
+		Question: []dns.Question{
+			dns.Question{Name: longName},
+		},
+		Answer: []dns.RR{
+			dns.RR{Name: longName},
+		},
+	}
+	builder, err := message.WireFormat()
+	if err != nil {
+		panic(err)
+	}
+	return (512 - len(builder)) * 255 / 256
 }
 
 func nextPacket(r *bytes.Reader) ([]byte, error) {
@@ -263,7 +295,7 @@ func loop(dnsConn net.PacketConn, domain dns.Name, ttConn *turbotunnel.QueuePack
 			addr := tp.Addr
 			err := handle(p, addr, dnsConn, domain, ttConn)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "handle from %v: %v\n", addr, err)
+				log.Printf("handle from %v: %v\n", addr, err)
 			}
 		}
 	}()
@@ -274,12 +306,13 @@ func loop(dnsConn net.PacketConn, domain dns.Name, ttConn *turbotunnel.QueuePack
 		n, addr, err := dnsConn.ReadFrom(buf[:])
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
+				log.Printf("ReadFrom temporary error: %v", err)
 				continue
 			}
 			return err
 		}
 		if n == len(buf) {
-			// Truncated packet.
+			log.Printf("ReadFrom: truncated packet")
 			continue
 		}
 		// Copy the packet data into its own buffer.
@@ -298,31 +331,6 @@ type dummyAddr struct{}
 func (addr dummyAddr) Network() string { return "dummy" }
 func (addr dummyAddr) String() string  { return "dummy" }
 
-func dnsMessageCapacity() int {
-	longName, err := dns.NewName([][]byte{
-		bytes.Repeat([]byte{'a'}, 63),
-		bytes.Repeat([]byte{'b'}, 63),
-		bytes.Repeat([]byte{'c'}, 63),
-		bytes.Repeat([]byte{'d'}, 61),
-	})
-	if err != nil {
-		panic(err)
-	}
-	message := dns.Message{
-		Question: []dns.Question{
-			dns.Question{Name: longName},
-		},
-		Answer: []dns.RR{
-			dns.RR{Name: longName},
-		},
-	}
-	builder, err := message.WireFormat()
-	if err != nil {
-		panic(err)
-	}
-	return (512 - len(builder)) * 255 / 256
-}
-
 func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout*2)
@@ -331,14 +339,10 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 		return fmt.Errorf("opening KCP listener: %v", err)
 	}
 	defer ln.Close()
-	mtu := dnsMessageCapacity()
-	if mtu < 80 {
-		return fmt.Errorf("too little space (%d) for downstream payload", mtu)
-	}
 	go func() {
-		err := acceptSessions(ln, mtu, upstream.(*net.TCPAddr))
+		err := acceptSessions(ln, upstream.(*net.TCPAddr))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "acceptSessions: %v\n", err)
+			log.Printf("acceptSessions: %v\n", err)
 		}
 	}()
 
@@ -355,7 +359,7 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 			defer wg.Done()
 			err := loop(dnsConn, domain, ttConn)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error in UDP loop: %v\n", err)
+				log.Printf("error in UDP loop: %v\n", err)
 			}
 		}()
 	}
@@ -374,6 +378,8 @@ func main() {
 	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on")
 	flag.Parse()
 
+	log.SetFlags(log.LstdFlags | log.LUTC)
+
 	if flag.NArg() != 2 {
 		flag.Usage()
 		os.Exit(1)
@@ -391,7 +397,6 @@ func main() {
 
 	err = run(domain, upstream, udpAddr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 }
