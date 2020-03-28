@@ -336,10 +336,16 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			}
 			nextP = nil
 
+			wait := time.NewTimer(2 * time.Second)
 		loop:
 			for {
 				select {
 				case p := <-ttConn.OutgoingQueue(rec.ClientID):
+					if !wait.Stop() {
+						<-wait.C
+					}
+					wait.Reset(0)
+
 					if int(uint16(len(p))) != len(p) {
 						panic(len(p))
 					}
@@ -353,11 +359,15 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 					binary.Write(&payload, binary.BigEndian, uint16(len(p)))
 					payload.Write(p)
 				case nextRec = <-ch:
+					if !wait.Stop() {
+						<-wait.C
+					}
+					wait.Reset(0)
 					// If there's another response waiting
 					// to be sent, wait no longer for a
 					// payload for this one.
 					break loop
-				default:
+				case <-wait.C:
 					break loop
 				}
 			}
