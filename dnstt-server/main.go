@@ -111,7 +111,16 @@ func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
 			1, // nc=1 => congestion window off
 		)
 		// Set the maximum transmission unit.
-		mtu := dnsMessageCapacity()
+		longName, err := dns.NewName([][]byte{
+			bytes.Repeat([]byte{'a'}, 63),
+			bytes.Repeat([]byte{'b'}, 63),
+			bytes.Repeat([]byte{'c'}, 63),
+			bytes.Repeat([]byte{'d'}, 61),
+		})
+		if err != nil {
+			panic(err)
+		}
+		mtu := dnsMessageCapacity(longName)
 		if mtu < 80 {
 			// This value doesn't depend on any configuration values, so it
 			// should never be too small.
@@ -128,22 +137,13 @@ func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
 	}
 }
 
-func dnsMessageCapacity() int {
-	longName, err := dns.NewName([][]byte{
-		bytes.Repeat([]byte{'a'}, 63),
-		bytes.Repeat([]byte{'b'}, 63),
-		bytes.Repeat([]byte{'c'}, 63),
-		bytes.Repeat([]byte{'d'}, 61),
-	})
-	if err != nil {
-		panic(err)
-	}
+func dnsMessageCapacity(name dns.Name) int {
 	message := dns.Message{
 		Question: []dns.Question{
-			dns.Question{Name: longName},
+			dns.Question{Name: name},
 		},
 		Answer: []dns.RR{
-			dns.RR{Name: longName},
+			dns.RR{Name: name},
 		},
 	}
 	builder, err := message.WireFormat()
@@ -328,7 +328,7 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			// section with downstream packets.
 			var payload bytes.Buffer
 
-			limit := 4096
+			limit := dnsMessageCapacity(rec.Resp.Question[0].Name)
 			if len(nextP) > 0 {
 				// No length check on any packet left over from
 				// the previous bundle -- if it's too large, we
