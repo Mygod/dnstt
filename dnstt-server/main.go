@@ -330,21 +330,26 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 
 			limit := 4096
 			if len(nextP) > 0 {
+				// No length check on any packet left over from
+				// the previous bundle -- if it's too large, we
+				// allow it to be truncated and dropped.
 				limit -= 2 + len(nextP)
 				binary.Write(&payload, binary.BigEndian, uint16(len(nextP)))
 				payload.Write(nextP)
 			}
 			nextP = nil
 
-			wait := time.NewTimer(2 * time.Second)
+			timer := time.NewTimer(2 * time.Second)
 		loop:
 			for {
 				select {
 				case p := <-ttConn.OutgoingQueue(rec.ClientID):
-					if !wait.Stop() {
-						<-wait.C
-					}
-					wait.Reset(0)
+					// We wait for the first packet in a
+					// bundle only. The second and later
+					// packets must be immediately available
+					// or they will be omitted from this
+					// send.
+					timer.Reset(0)
 
 					if int(uint16(len(p))) != len(p) {
 						panic(len(p))
@@ -358,19 +363,19 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 					limit -= 2 + len(p)
 					binary.Write(&payload, binary.BigEndian, uint16(len(p)))
 					payload.Write(p)
-				case nextRec = <-ch:
-					if !wait.Stop() {
-						<-wait.C
+				default:
+					select {
+					case nextRec = <-ch:
+						// If there's another response waiting
+						// to be sent, wait no longer for a
+						// payload for this one.
+						break loop
+					case <-timer.C:
+						break loop
 					}
-					wait.Reset(0)
-					// If there's another response waiting
-					// to be sent, wait no longer for a
-					// payload for this one.
-					break loop
-				case <-wait.C:
-					break loop
 				}
 			}
+			timer.Stop()
 
 			rec.Resp.Answer = append(rec.Resp.Answer, dns.RR{
 				Name: rec.Resp.Question[0].Name,
