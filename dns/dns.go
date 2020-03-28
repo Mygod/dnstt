@@ -141,6 +141,11 @@ type Message struct {
 	Additional []RR
 }
 
+// Rcode extracts the RCODE part of the Flags field.
+func (msg *Message) Rcode() uint16 {
+	return msg.Flags & 0x000f
+}
+
 // Question represents the question section of a message.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.2
