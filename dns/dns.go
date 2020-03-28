@@ -45,6 +45,8 @@ var (
 const (
 	// https://tools.ietf.org/html/rfc1035#section-3.2.2
 	RRTypeTXT = 16
+	// https://tools.ietf.org/html/rfc6891#section-6.1.1
+	RRTypeOPT = 41
 
 	// https://tools.ietf.org/html/rfc1035#section-3.2.4
 	ClassIN = 1

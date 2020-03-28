@@ -211,6 +211,16 @@ func (c *DNSPacketConn) send(udpConn net.PacketConn, p []byte, addr net.Addr) er
 				Class: dns.ClassIN,
 			},
 		},
+		// EDNS(0)
+		Additional: []dns.RR{
+			{
+				Name:  dns.Name{},
+				Type:  dns.RRTypeOPT,
+				Class: 4096, // requestor's UDP payload size
+				TTL:   0,    // extended RCODE and flags
+				Data:  []byte{},
+			},
+		},
 	}
 	buf, err := query.WireFormat()
 	if err != nil {
