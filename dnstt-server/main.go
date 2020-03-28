@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/base32"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -313,16 +314,23 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			// If it's a non-error response, we can fill the Answer
 			// section with downstream packets.
 			// TODO: can bundle multiple packets here.
+			var buf bytes.Buffer
 			select {
 			case p := <-ttConn.OutgoingQueue(rec.ClientID):
-				rec.Resp.Answer = append(rec.Resp.Answer, dns.RR{
-					Name: rec.Resp.Question[0].Name,
-					Type: dns.RRTypeTXT,
-					TTL:  responseTTL,
-					Data: dns.EncodeRDataTXT(p),
-				})
+				n := uint16(len(p))
+				if int(n) != len(p) {
+					panic(len(p))
+				}
+				binary.Write(&buf, binary.BigEndian, n)
+				buf.Write(p)
 			default:
 			}
+			rec.Resp.Answer = append(rec.Resp.Answer, dns.RR{
+				Name: rec.Resp.Question[0].Name,
+				Type: dns.RRTypeTXT,
+				TTL:  responseTTL,
+				Data: dns.EncodeRDataTXT(buf.Bytes()),
+			})
 		}
 		buf, err := rec.Resp.WireFormat()
 		if err != nil {
