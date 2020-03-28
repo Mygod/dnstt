@@ -45,6 +45,26 @@ func chunks(p []byte, n int) [][]byte {
 	return result
 }
 
+func nextPacket(r *bytes.Reader) ([]byte, error) {
+	eof := func(err error) error {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+
+	for {
+		var n uint16
+		err := binary.Read(r, binary.BigEndian, &n)
+		if err != nil {
+			return nil, err
+		}
+		p := make([]byte, n)
+		_, err = io.ReadFull(r, p)
+		return p, eof(err)
+	}
+}
+
 func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
 	if resp.Flags&0x8000 != 0x8000 {
 		// QR != 1, this is not a response.
@@ -78,27 +98,79 @@ func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
 }
 
 type DNSPacketConn struct {
-	clientID  turbotunnel.ClientID
-	domain    dns.Name
-	sendQueue chan []byte
-	net.PacketConn
+	clientID turbotunnel.ClientID
+	domain   dns.Name
+	pollChan chan struct{}
+	*turbotunnel.QueuePacketConn
 }
 
-func NewDNSPacketConn(conn net.PacketConn, addr net.Addr, domain dns.Name) *DNSPacketConn {
+func NewDNSPacketConn(udpConn net.PacketConn, addr net.Addr, domain dns.Name) *DNSPacketConn {
+	// Generate a new random ClientID.
 	var clientID turbotunnel.ClientID
 	rand.Read(clientID[:])
-	pconn := &DNSPacketConn{
-		clientID:   clientID,
-		domain:     domain,
-		sendQueue:  make(chan []byte, 8),
-		PacketConn: conn,
+	c := &DNSPacketConn{
+		clientID:        clientID,
+		domain:          domain,
+		pollChan:        make(chan struct{}),
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, idleTimeout),
 	}
-	go pconn.sendLoop(addr)
-	return pconn
+	go func() {
+		err := c.recvLoop(udpConn)
+		if err != nil {
+			log.Printf("recvLoop: %v", err)
+		}
+	}()
+	go func() {
+		err := c.sendLoop(udpConn, addr)
+		if err != nil {
+			log.Printf("sendLoop: %v", err)
+		}
+	}()
+	return c
+}
+
+func (c *DNSPacketConn) recvLoop(udpConn net.PacketConn) error {
+	for {
+		var buf [4096]byte
+		n, addr, err := udpConn.ReadFrom(buf[:])
+		if err != nil {
+			if err, ok := err.(net.Error); ok && err.Temporary() {
+				log.Printf("ReadFrom temporary error: %v", err)
+				continue
+			}
+			return err
+		}
+
+		// Got a UDP packet. Try to parse it as a DNS message.
+		resp, err := dns.MessageFromWireFormat(buf[:n])
+		if err != nil {
+			log.Printf("MessageFromWireFormat: %v", err)
+			continue
+		}
+
+		payload := dnsResponsePayload(&resp, c.domain)
+		// Reading anything gives sendLoop license to poll immediately.
+		if len(payload) > 0 {
+			select {
+			case c.pollChan <- struct{}{}:
+			default:
+			}
+		}
+
+		// Pull out the packets contained in the payload.
+		r := bytes.NewReader(payload)
+		for {
+			p, err := nextPacket(r)
+			if err != nil {
+				break
+			}
+			c.QueuePacketConn.QueueIncoming(p, addr)
+		}
+	}
 }
 
 // send sends a single packet in a DNS query.
-func (c *DNSPacketConn) send(p []byte, addr net.Addr) error {
+func (c *DNSPacketConn) send(udpConn net.PacketConn, p []byte, addr net.Addr) error {
 	var decoded []byte
 	{
 		if len(p) >= 224 {
@@ -145,21 +217,22 @@ func (c *DNSPacketConn) send(p []byte, addr net.Addr) error {
 		return err
 	}
 
-	_, err = c.PacketConn.WriteTo(buf, addr)
+	_, err = udpConn.WriteTo(buf, addr)
 	return err
 }
 
-func (c *DNSPacketConn) sendLoop(addr net.Addr) {
+func (c *DNSPacketConn) sendLoop(udpConn net.PacketConn, addr net.Addr) error {
 	pollDelay := initPollDelay
 	pollTimer := time.NewTimer(pollDelay)
 	for {
 		var p []byte
-		var ok bool
 		select {
-		case p, ok = <-c.sendQueue:
-			if !ok {
-				return
+		case <-c.pollChan:
+			if !pollTimer.Stop() {
+				<-pollTimer.C
 			}
+			p = nil
+		case p = <-c.QueuePacketConn.OutgoingQueue(addr):
 			if !pollTimer.Stop() {
 				<-pollTimer.C
 			}
@@ -172,64 +245,12 @@ func (c *DNSPacketConn) sendLoop(addr net.Addr) {
 			}
 		}
 		pollTimer.Reset(pollDelay)
-		err := c.send(p, addr)
+		err := c.send(udpConn, p, addr)
 		if err != nil {
 			log.Printf("send: %v", err)
 			continue
 		}
 	}
-}
-
-func (c *DNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	for {
-		var buf [4096]byte
-		n, addr, err := c.PacketConn.ReadFrom(buf[:])
-		if err != nil {
-			if err, ok := err.(net.Error); ok && err.Temporary() {
-				log.Printf("ReadFrom temporary error: %v", err)
-				continue
-			}
-			return n, addr, err
-		}
-		resp, err := dns.MessageFromWireFormat(buf[:n])
-		if err != nil {
-			log.Printf("MessageFromWireFormat: %v", err)
-			continue
-		}
-		payload := dnsResponsePayload(&resp, c.domain)
-		if payload == nil {
-			continue
-		}
-		// Reading anything gives us license to poll immediately.
-		if len(payload) > 0 {
-			select {
-			case c.sendQueue <- nil:
-			default:
-			}
-		}
-		return copy(p, payload), addr, nil
-	}
-}
-
-func (c *DNSPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	// addr is ignored.
-	// Copy the slice so that the caller may reuse it.
-	buf := make([]byte, len(p))
-	copy(buf, p)
-	select {
-	case c.sendQueue <- buf:
-	default:
-	}
-	return len(buf), nil
-}
-
-func (c *DNSPacketConn) Close() error {
-	select {
-	case <-c.sendQueue:
-	default:
-		close(c.sendQueue)
-	}
-	return c.PacketConn.Close()
 }
 
 func handle(local *net.TCPConn, sess *smux.Session) error {
@@ -290,14 +311,14 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 		if err != nil {
 			return err
 		}
-		dnsConn, err := net.ListenUDP("udp", nil)
+		udpConn, err := net.ListenUDP("udp", nil)
 		if err != nil {
 			return fmt.Errorf("opening UDP conn: %v", err)
 		}
-		defer dnsConn.Close()
+		defer udpConn.Close()
 
 		// Start up the virtual PacketConn for turbotunnel.
-		pconn := NewDNSPacketConn(dnsConn, addr, domain)
+		pconn := NewDNSPacketConn(udpConn, addr, domain)
 
 		// Open a KCP conn on the PacketConn.
 		conn, err := kcp.NewConn2(addr, nil, 0, 0, pconn)
