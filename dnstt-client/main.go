@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -173,6 +174,7 @@ func (c *DNSPacketConn) sendLoop(addr net.Addr) {
 		pollTimer.Reset(pollDelay)
 		err := c.send(p, addr)
 		if err != nil {
+			log.Printf("send: %v", err)
 			continue
 		}
 	}
@@ -184,12 +186,14 @@ func (c *DNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		n, addr, err := c.PacketConn.ReadFrom(buf[:])
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
+				log.Printf("ReadFrom temporary error: %v", err)
 				continue
 			}
 			return n, addr, err
 		}
 		resp, err := dns.MessageFromWireFormat(buf[:n])
 		if err != nil {
+			log.Printf("MessageFromWireFormat: %v", err)
 			continue
 		}
 		payload := dnsResponsePayload(&resp, c.domain)
@@ -241,7 +245,7 @@ func handle(local *net.TCPConn, sess *smux.Session) error {
 		defer wg.Done()
 		_, err := io.Copy(stream, local)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "copy stream←local: %v\n", err)
+			log.Printf("copy stream←local: %v\n", err)
 		}
 		stream.Close()
 	}()
@@ -250,7 +254,7 @@ func handle(local *net.TCPConn, sess *smux.Session) error {
 		defer wg.Done()
 		_, err := io.Copy(local, stream)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "copy local←stream: %v\n", err)
+			log.Printf("copy local←stream: %v\n", err)
 		}
 		local.Close()
 	}()
@@ -348,7 +352,7 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 			defer local.Close()
 			err := handle(local.(*net.TCPConn), sess)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "handle: %v\n", err)
+				log.Printf("handle: %v\n", err)
 			}
 		}()
 	}
@@ -364,20 +368,21 @@ func main() {
 	flag.StringVar(&udpAddr, "udp", "", "UDP port of DNS server")
 	flag.Parse()
 
+	log.SetFlags(log.LstdFlags | log.LUTC)
+
 	if flag.NArg() != 2 {
 		flag.Usage()
 		os.Exit(1)
 	}
 	domain, err := dns.ParseName(flag.Arg(0))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
+		log.Printf("invalid domain %+q: %v\n", flag.Arg(0), err)
 		os.Exit(1)
 	}
 	localAddr := flag.Arg(1)
 
 	err = run(domain, localAddr, udpAddr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 }
