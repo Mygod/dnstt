@@ -110,8 +110,10 @@ func (c *DNSPacketConn) send(p []byte, addr net.Addr) error {
 		buf.WriteByte(224 + numPadding)
 		io.CopyN(&buf, rand.Reader, numPadding)
 		// Packet contents
-		buf.WriteByte(byte(len(p)))
-		buf.Write(p)
+		if len(p) > 0 {
+			buf.WriteByte(byte(len(p)))
+			buf.Write(p)
+		}
 		decoded = buf.Bytes()
 	}
 
