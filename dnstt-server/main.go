@@ -23,6 +23,28 @@ import (
 const (
 	idleTimeout = 10 * time.Minute
 	responseTTL = 60
+
+	// We don't send UDP payloads larger than this, in an attempt to avoid
+	// network-layer fragmentation. 40 bytes is the size of an IPv6 header
+	// (though without any extension headers). 8 bytes is the size of a UDP
+	// header.
+	maxUDPPayload = 1500 - 40 - 8
+
+	// We may have a variable amount of room in which to encode downstream
+	// packets in each response, because we must echo the query's Question
+	// section, which is of variable length. But we cannot give dynamic
+	// packet size limits to KCP; the best we can do is set a global maximum
+	// which no packet will exceed. We choose that maximum to keep the UDP
+	// payload size under maxUDPPayload, even in the worst case of a
+	// maximum-length name in the Question section. The precise limit is
+	// 1153 = (maxUDPPayload - 294) * 255/256, where 294 is the size of a
+	// DNS message containing a Question section with a name that is 255
+	// bytes long, an Answer section with a single TXT RR whose name is a
+	// compressed pointer to the name in the Question section and no data,
+	// and an Additional section with an OPT RR for EDNS(0); and 255/256
+	// reflects the overhead of encoding data into a TXT RR. We leave some
+	// slack in case of IPv6 extension headers or non-Ethernet links.
+	maxEncodedPayload = 1100
 )
 
 // A base32 encoding without padding.
@@ -110,23 +132,11 @@ func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
 			0, // default resend
 			1, // nc=1 => congestion window off
 		)
-		// Set the maximum transmission unit.
-		longName, err := dns.NewName([][]byte{
-			bytes.Repeat([]byte{'a'}, 63),
-			bytes.Repeat([]byte{'b'}, 63),
-			bytes.Repeat([]byte{'c'}, 63),
-			bytes.Repeat([]byte{'d'}, 61),
-		})
-		if err != nil {
-			panic(err)
+		// Set the maximum transmission unit. 2 bytes accounts for a
+		// packet length prefix.
+		if rc := conn.SetMtu(maxEncodedPayload - 2); !rc {
+			panic(rc)
 		}
-		mtu := dnsMessageCapacity(longName)
-		if mtu < 80 {
-			// This value doesn't depend on any configuration values, so it
-			// should never be too small.
-			panic("too little space for downstream payload")
-		}
-		conn.SetMtu(mtu)
 		go func() {
 			defer conn.Close()
 			err := acceptStreams(conn, upstream)
@@ -135,22 +145,6 @@ func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
 			}
 		}()
 	}
-}
-
-func dnsMessageCapacity(name dns.Name) int {
-	message := dns.Message{
-		Question: []dns.Question{
-			dns.Question{Name: name},
-		},
-		Answer: []dns.RR{
-			dns.RR{Name: name},
-		},
-	}
-	builder, err := message.WireFormat()
-	if err != nil {
-		panic(err)
-	}
-	return (512 - len(builder)) * 255 / 256
 }
 
 func nextPacket(r *bytes.Reader) ([]byte, error) {
@@ -239,6 +233,17 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			// 512."
 			payloadSize = 512
 		}
+	}
+	if payloadSize < maxUDPPayload {
+		// We require clients to support EDNS(0) with a minimum payload
+		// size; otherwise we would have to set a small KCP MTU (only
+		// around 200 bytes).
+		// https://tools.ietf.org/html/rfc6891#section-7
+		// "If there is a problem with processing the OPT record itself,
+		// such as an option value that is badly formatted or that
+		// includes out-of-range values, a FORMERR MUST be returned."
+		resp.Flags |= dns.RcodeFormatError
+		return resp, clientID, nil
 	}
 
 	if query.Flags&0x7800 != 0 {
@@ -381,7 +386,7 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 
 			var payload bytes.Buffer
 
-			limit := dnsMessageCapacity(rec.Resp.Question[0].Name)
+			limit := maxEncodedPayload
 			if len(nextP) > 0 {
 				// No length check on any packet left over from
 				// the previous bundle -- if it's too large, we
