@@ -351,7 +351,9 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 			return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
 		}
 		fmt.Printf("MTU %d\n", mtu)
-		conn.SetMtu(mtu)
+		if rc := conn.SetMtu(mtu); !rc {
+			panic(rc)
+		}
 
 		// Start a smux session on the KCP conn.
 		smuxConfig := smux.DefaultConfig()
