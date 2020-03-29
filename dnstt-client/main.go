@@ -350,7 +350,7 @@ func run(domain dns.Name, localAddr, udpAddr string) error {
 		if mtu < 80 {
 			return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
 		}
-		fmt.Printf("MTU %d\n", mtu)
+		log.Printf("MTU %d\n", mtu)
 		if rc := conn.SetMtu(mtu); !rc {
 			panic(rc)
 		}
