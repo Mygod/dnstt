@@ -193,6 +193,54 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		// QR != 0, this is not a query. Don't even send a response.
 		return nil, clientID, nil
 	}
+
+	// Check for EDNS(0) support. Include our own OPT RR only if we receive
+	// one from the requestor.
+	// https://tools.ietf.org/html/rfc6891#section-6.1.1
+	// "Lack of presence of an OPT record in a request MUST be taken as an
+	// indication that the requestor does not implement any part of this
+	// specification and that the responder MUST NOT include an OPT record
+	// in its response."
+	payloadSize := 0
+	for _, rr := range query.Additional {
+		if rr.Type != dns.RRTypeOPT {
+			continue
+		}
+		if len(resp.Additional) != 0 {
+			// https://tools.ietf.org/html/rfc6891#section-6.1.1
+			// "If a query message with more than one OPT RR is
+			// received, a FORMERR (RCODE=1) MUST be returned."
+			resp.Flags |= dns.RcodeFormatError
+			return resp, clientID, nil
+		}
+		resp.Additional = append(resp.Additional, dns.RR{
+			Name:  dns.Name{},
+			Type:  dns.RRTypeOPT,
+			Class: 4096, // responder's UDP payload size
+			TTL:   0,
+			Data:  []byte{},
+		})
+		additional := &resp.Additional[0]
+
+		version := (rr.TTL >> 16) & 0xff
+		if version != 0 {
+			// https://tools.ietf.org/html/rfc6891#section-6.1.1
+			// "If a responder does not implement the VERSION level
+			// of the request, then it MUST respond with
+			// RCODE=BADVERS."
+			resp.Flags |= dns.ExtendedRcodeBadVers & 0xf
+			additional.TTL = (dns.ExtendedRcodeBadVers >> 4) << 24
+		}
+
+		payloadSize = int(rr.Class)
+		if payloadSize < 512 {
+			// https://tools.ietf.org/html/rfc6891#section-6.1.1
+			// "Values lower than 512 MUST be treated as equal to
+			// 512."
+			payloadSize = 512
+		}
+	}
+
 	if query.Flags&0x7800 != 0 {
 		// We don't support OPCODE != QUERY.
 		resp.Flags |= dns.RcodeNotImplemented
@@ -265,8 +313,7 @@ func loop(dnsConn net.PacketConn, domain dns.Name, ttConn *turbotunnel.QueuePack
 
 func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch chan<- *record) error {
 	for {
-		// One byte longer than we want, to check for truncation.
-		var buf [513]byte
+		var buf [4096]byte
 		n, addr, err := dnsConn.ReadFrom(buf[:])
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
@@ -274,10 +321,6 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 				continue
 			}
 			return err
-		}
-		if n == len(buf) {
-			log.Printf("%v: ReadFrom: truncated packet", addr)
-			continue
 		}
 
 		// Got a UDP packet. Try to parse it as a DNS message.
@@ -326,6 +369,16 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 		if rec.Resp.Rcode() == dns.RcodeNoError && len(rec.Resp.Question) == 1 {
 			// If it's a non-error response, we can fill the Answer
 			// section with downstream packets.
+
+			rec.Resp.Answer = []dns.RR{
+				{
+					Name: rec.Resp.Question[0].Name,
+					Type: dns.RRTypeTXT,
+					TTL:  responseTTL,
+					Data: nil, // will be filled in below
+				},
+			}
+
 			var payload bytes.Buffer
 
 			limit := dnsMessageCapacity(rec.Resp.Question[0].Name)
@@ -377,12 +430,7 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			}
 			timer.Stop()
 
-			rec.Resp.Answer = append(rec.Resp.Answer, dns.RR{
-				Name: rec.Resp.Question[0].Name,
-				Type: dns.RRTypeTXT,
-				TTL:  responseTTL,
-				Data: dns.EncodeRDataTXT(payload.Bytes()),
-			})
+			rec.Resp.Answer[0].Data = dns.EncodeRDataTXT(payload.Bytes())
 		}
 
 		buf, err := rec.Resp.WireFormat()

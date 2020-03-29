@@ -52,10 +52,11 @@ const (
 	ClassIN = 1
 
 	// https://tools.ietf.org/html/rfc1035#section-4.1.1
-	RcodeNoError        = 0
-	RcodeFormatError    = 1
-	RcodeNameError      = 3 // a.k.a. NXDOMAIN
-	RcodeNotImplemented = 4
+	RcodeNoError         = 0
+	RcodeFormatError     = 1
+	RcodeNameError       = 3 // a.k.a. NXDOMAIN
+	RcodeNotImplemented  = 4
+	ExtendedRcodeBadVers = 16
 )
 
 // Name represents a domain name, a sequence of labels each of which is 63
@@ -385,7 +386,7 @@ func (builder *messageBuilder) writeName(name Name) {
 		// Has this suffix already been encoded in the message?
 		if ptr, ok := builder.nameCache[name[i:].String()]; ok && ptr&0x3fff == ptr {
 			// If so, we can write a compression pointer.
-			binary.Write(&builder.w, binary.BigEndian, uint16(0xc000 | ptr))
+			binary.Write(&builder.w, binary.BigEndian, uint16(0xc000|ptr))
 			return
 		}
 		// Not cached; we must encode this label verbatim. Store a cache
