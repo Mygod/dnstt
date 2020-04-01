@@ -268,7 +268,11 @@ func handle(local *net.TCPConn, sess *smux.Session) error {
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	log.Printf("begin stream %v", stream.ID())
+	defer func() {
+		log.Printf("end stream %v", stream.ID())
+		stream.Close()
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
