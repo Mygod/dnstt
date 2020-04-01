@@ -210,13 +210,20 @@ func run(domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net
 	}
 }
 
+type dummyAddr struct{}
+
+func (addr dummyAddr) Network() string { return "dummy" }
+func (addr dummyAddr) String() string  { return "dummy" }
+
 func main() {
+	var dohURL string
 	var udpAddr string
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s -udp ADDR DOMAIN LOCALADDR\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [-doh URL|-udp ADDR] DOMAIN LOCALADDR\n", os.Args[0])
 		flag.PrintDefaults()
 	}
+	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
 	flag.Parse()
 
@@ -245,6 +252,11 @@ func main() {
 		s string
 		f func(string) (net.Addr, net.PacketConn, error)
 	}{
+		// -doh
+		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
+			c, err := NewDoHPacketConn(dohURL, domain)
+			return dummyAddr{}, c, err
+		}},
 		// -udp
 		{udpAddr, func(s string) (net.Addr, net.PacketConn, error) {
 			addr, err := net.ResolveUDPAddr("udp", s)
@@ -262,7 +274,7 @@ func main() {
 			continue
 		}
 		if pconn != nil {
-			fmt.Fprintf(os.Stderr, "the -udp option may be given only once\n")
+			fmt.Fprintf(os.Stderr, "only one of -doh and -udp may be given\n")
 			os.Exit(1)
 		}
 		a, c, err := opt.f(opt.s)
@@ -274,7 +286,7 @@ func main() {
 		pconn = c
 	}
 	if pconn == nil {
-		fmt.Fprintf(os.Stderr, "the -udp option is required\n")
+		fmt.Fprintf(os.Stderr, "one of -doh or -udp is required\n")
 		os.Exit(1)
 	}
 

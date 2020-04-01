@@ -72,6 +72,10 @@ func (c *UDPPacketConn) recvLoop(udpConn net.PacketConn) error {
 			case c.pollChan <- struct{}{}:
 			default:
 			}
+			select {
+			case c.pollChan <- struct{}{}:
+			default:
+			}
 		}
 
 		// Pull out the packets contained in the payload.
