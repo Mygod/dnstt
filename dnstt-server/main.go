@@ -179,7 +179,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 
 	resp := &dns.Message{
 		ID:       query.ID,
-		Flags:    0x8400, // QR = 1, AA = 1, RCODE = no error
+		Flags:    0x8000, // QR = 1, RCODE = no error
 		Question: query.Question,
 	}
 
@@ -234,15 +234,38 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			payloadSize = 512
 		}
 	}
-	if payloadSize < maxUDPPayload {
-		// We require clients to support EDNS(0) with a minimum payload
-		// size; otherwise we would have to set a small KCP MTU (only
-		// around 200 bytes).
-		// https://tools.ietf.org/html/rfc6891#section-7
-		// "If there is a problem with processing the OPT record itself,
-		// such as an option value that is badly formatted or that
-		// includes out-of-range values, a FORMERR MUST be returned."
+	// We will return RcodeFormatError if payloadSize is too small, but
+	// first, check the name in order to set the AA bit properly.
+
+	// There must be exactly one question.
+	if len(query.Question) != 1 {
 		resp.Flags |= dns.RcodeFormatError
+		return resp, clientID, nil
+	}
+	question := query.Question[0]
+	// Check the name to see if it ends in our chosen domain, and extract
+	// all that comes before the domain if it does. If it does not, we will
+	// return RcodeNameError below, but prefer to return RcodeFormatError
+	// for payload size if that applies as well.
+	prefix, ok := question.Name.TrimSuffix(domain)
+	if ok {
+		resp.Flags |= 0x0400 // AA = 1
+	}
+
+	// We require clients to support EDNS(0) with a minimum payload size;
+	// otherwise we would have to set a small KCP MTU (only around 200
+	// bytes). https://tools.ietf.org/html/rfc6891#section-7 "If there is a
+	// problem with processing the OPT record itself, such as an option
+	// value that is badly formatted or that includes out-of-range values, a
+	// FORMERR MUST be returned."
+	if payloadSize < maxUDPPayload {
+		resp.Flags |= dns.RcodeFormatError
+		return resp, clientID, nil
+	}
+
+	if resp.Flags|0x0400 == 0 { // AA
+		// Not a name we are authoritative for.
+		resp.Flags |= dns.RcodeNameError
 		return resp, clientID, nil
 	}
 
@@ -252,22 +275,9 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		return resp, clientID, nil
 	}
 
-	if len(query.Question) != 1 {
-		// There must be exactly one question.
-		resp.Flags |= dns.RcodeFormatError
-		return resp, clientID, nil
-	}
-	question := query.Question[0]
 	if question.Type != dns.RRTypeTXT {
 		// We only support QTYPE == TXT.
 		resp.Flags |= dns.RcodeNotImplemented
-		return resp, clientID, nil
-	}
-
-	prefix, ok := question.Name.TrimSuffix(domain)
-	if !ok {
-		// Not a name we are authoritative for.
-		resp.Flags |= dns.RcodeNameError
 		return resp, clientID, nil
 	}
 
