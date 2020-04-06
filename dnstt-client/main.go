@@ -98,7 +98,7 @@ func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
 func handle(local *net.TCPConn, sess *smux.Session) error {
 	stream, err := sess.OpenStream()
 	if err != nil {
-		return err
+		return fmt.Errorf("opening stream: %v", err)
 	}
 	log.Printf("begin stream %v", stream.ID())
 	defer func() {
