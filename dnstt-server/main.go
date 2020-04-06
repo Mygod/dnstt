@@ -377,10 +377,11 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 
 			rec.Resp.Answer = []dns.RR{
 				{
-					Name: rec.Resp.Question[0].Name,
-					Type: dns.RRTypeTXT,
-					TTL:  responseTTL,
-					Data: nil, // will be filled in below
+					Name:  rec.Resp.Question[0].Name,
+					Type:  rec.Resp.Question[0].Type,
+					Class: rec.Resp.Question[0].Class,
+					TTL:   responseTTL,
+					Data:  nil, // will be filled in below
 				},
 			}
 
