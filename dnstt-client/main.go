@@ -225,13 +225,15 @@ func (addr dummyAddr) String() string  { return "dummy" }
 
 func main() {
 	var dohURL string
+	var dotAddr string
 	var udpAddr string
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [-doh URL|-udp ADDR] PUBKEY DOMAIN LOCALADDR\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [-doh URL|-dot ADDR|-udp ADDR] PUBKEY DOMAIN LOCALADDR\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
+	flag.StringVar(&dotAddr, "dot", "", "address of DoT resolver")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
 	flag.Parse()
 
@@ -271,6 +273,12 @@ func main() {
 			pconn, err := NewHTTPPacketConn(dohURL, 32)
 			return addr, pconn, err
 		}},
+		// -dot
+		{dotAddr, func(s string) (net.Addr, net.PacketConn, error) {
+			addr := dummyAddr{}
+			pconn, err := NewTLSPacketConn(dotAddr)
+			return addr, pconn, err
+		}},
 		// -udp
 		{udpAddr, func(s string) (net.Addr, net.PacketConn, error) {
 			addr, err := net.ResolveUDPAddr("udp", s)
@@ -285,7 +293,7 @@ func main() {
 			continue
 		}
 		if pconn != nil {
-			fmt.Fprintf(os.Stderr, "only one of -doh and -udp may be given\n")
+			fmt.Fprintf(os.Stderr, "only one of -doh, -dot, and -udp may be given\n")
 			os.Exit(1)
 		}
 		var err error
@@ -296,7 +304,7 @@ func main() {
 		}
 	}
 	if pconn == nil {
-		fmt.Fprintf(os.Stderr, "one of -doh or -udp is required\n")
+		fmt.Fprintf(os.Stderr, "one of -doh, -dot, or -udp is required\n")
 		os.Exit(1)
 	}
 
