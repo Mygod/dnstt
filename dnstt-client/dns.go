@@ -14,31 +14,31 @@ import (
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
-type UDPPacketConn struct {
+type DNSPacketConn struct {
 	clientID turbotunnel.ClientID
 	domain   dns.Name
 	pollChan chan struct{}
 	*turbotunnel.QueuePacketConn
 }
 
-func NewUDPPacketConn(udpConn net.PacketConn, addr net.Addr, domain dns.Name) *UDPPacketConn {
+func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) *DNSPacketConn {
 	// Generate a new random ClientID.
 	var clientID turbotunnel.ClientID
 	rand.Read(clientID[:])
-	c := &UDPPacketConn{
+	c := &DNSPacketConn{
 		clientID:        clientID,
 		domain:          domain,
 		pollChan:        make(chan struct{}),
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, idleTimeout),
 	}
 	go func() {
-		err := c.recvLoop(udpConn)
+		err := c.recvLoop(transport)
 		if err != nil {
 			log.Printf("recvLoop: %v", err)
 		}
 	}()
 	go func() {
-		err := c.sendLoop(udpConn, addr)
+		err := c.sendLoop(transport, addr)
 		if err != nil {
 			log.Printf("sendLoop: %v", err)
 		}
@@ -46,10 +46,10 @@ func NewUDPPacketConn(udpConn net.PacketConn, addr net.Addr, domain dns.Name) *U
 	return c
 }
 
-func (c *UDPPacketConn) recvLoop(udpConn net.PacketConn) error {
+func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 	for {
 		var buf [4096]byte
-		n, addr, err := udpConn.ReadFrom(buf[:])
+		n, addr, err := transport.ReadFrom(buf[:])
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
 				log.Printf("ReadFrom temporary error: %v", err)
@@ -58,7 +58,7 @@ func (c *UDPPacketConn) recvLoop(udpConn net.PacketConn) error {
 			return err
 		}
 
-		// Got a UDP packet. Try to parse it as a DNS message.
+		// Got a response. Try to parse it as a DNS message.
 		resp, err := dns.MessageFromWireFormat(buf[:n])
 		if err != nil {
 			log.Printf("MessageFromWireFormat: %v", err)
@@ -91,7 +91,7 @@ func (c *UDPPacketConn) recvLoop(udpConn net.PacketConn) error {
 }
 
 // send sends a single packet in a DNS query.
-func (c *UDPPacketConn) send(udpConn net.PacketConn, p []byte, addr net.Addr) error {
+func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) error {
 	var decoded []byte
 	{
 		if len(p) >= 224 {
@@ -148,11 +148,11 @@ func (c *UDPPacketConn) send(udpConn net.PacketConn, p []byte, addr net.Addr) er
 		return err
 	}
 
-	_, err = udpConn.WriteTo(buf, addr)
+	_, err = transport.WriteTo(buf, addr)
 	return err
 }
 
-func (c *UDPPacketConn) sendLoop(udpConn net.PacketConn, addr net.Addr) error {
+func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error {
 	pollDelay := initPollDelay
 	pollTimer := time.NewTimer(pollDelay)
 	for {
@@ -176,7 +176,7 @@ func (c *UDPPacketConn) sendLoop(udpConn net.PacketConn, addr net.Addr) error {
 			}
 		}
 		pollTimer.Reset(pollDelay)
-		err := c.send(udpConn, p, addr)
+		err := c.send(transport, p, addr)
 		if err != nil {
 			log.Printf("send: %v", err)
 			continue

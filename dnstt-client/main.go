@@ -267,8 +267,9 @@ func main() {
 	}{
 		// -doh
 		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
-			c, err := NewDoHPacketConn(dohURL, domain)
-			return dummyAddr{}, c, err
+			addr := dummyAddr{}
+			pconn, err := NewHTTPPacketConn(dohURL, 32)
+			return addr, pconn, err
 		}},
 		// -udp
 		{udpAddr, func(s string) (net.Addr, net.PacketConn, error) {
@@ -276,11 +277,8 @@ func main() {
 			if err != nil {
 				return nil, nil, err
 			}
-			udpConn, err := net.ListenUDP("udp", nil)
-			if err != nil {
-				return nil, nil, err
-			}
-			return addr, NewUDPPacketConn(udpConn, addr, domain), nil
+			pconn, err := net.ListenUDP("udp", nil)
+			return addr, pconn, err
 		}},
 	} {
 		if opt.s == "" {
@@ -290,19 +288,19 @@ func main() {
 			fmt.Fprintf(os.Stderr, "only one of -doh and -udp may be given\n")
 			os.Exit(1)
 		}
-		a, c, err := opt.f(opt.s)
+		var err error
+		remoteAddr, pconn, err = opt.f(opt.s)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		remoteAddr = a
-		pconn = c
 	}
 	if pconn == nil {
 		fmt.Fprintf(os.Stderr, "one of -doh or -udp is required\n")
 		os.Exit(1)
 	}
 
+	pconn = NewDNSPacketConn(pconn, remoteAddr, domain)
 	err = run(pubkey, domain, localAddr, remoteAddr, pconn)
 	if err != nil {
 		log.Fatal(err)
