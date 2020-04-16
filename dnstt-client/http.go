@@ -14,19 +14,17 @@ import (
 
 type HTTPPacketConn struct {
 	urlString string
-	sendChan  chan []byte
 	*turbotunnel.QueuePacketConn
 }
 
 func NewHTTPPacketConn(urlString string, numSenders int) (*HTTPPacketConn, error) {
 	c := &HTTPPacketConn{
 		urlString:       urlString,
-		sendChan:        make(chan []byte, 32),
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout),
 	}
 	for i := 0; i < numSenders; i++ {
 		go func() {
-			for p := range c.sendChan {
+			for p := range c.QueuePacketConn.OutgoingQueue(dummyAddr{}) {
 				err := c.send(p)
 				if err != nil {
 					log.Printf("sender thread: %v", err)
@@ -64,14 +62,5 @@ func (c *HTTPPacketConn) send(p []byte) error {
 
 func (c *HTTPPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	// Ignore addr.
-	select {
-	case c.sendChan <- p:
-	default:
-	}
-	return len(p), nil
-}
-
-func (c *HTTPPacketConn) Close() error {
-	close(c.sendChan) // TODO
-	return c.QueuePacketConn.Close()
+	return c.QueuePacketConn.WriteTo(p, dummyAddr{})
 }
