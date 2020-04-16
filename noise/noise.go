@@ -95,9 +95,11 @@ func (rw *ReadWriter) Close() error {
 	return rw.rw.Close()
 }
 
+var cipherSuite = noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashBLAKE2s)
+
 func newConfig(initiator bool) noise.Config {
 	return noise.Config{
-		CipherSuite: noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashBLAKE2s),
+		CipherSuite: cipherSuite,
 		Pattern:     noise.HandshakeNK,
 		Initiator:   initiator,
 		Prologue:    []byte("dnstt 2020-04-13"),
