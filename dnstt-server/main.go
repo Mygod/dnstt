@@ -46,6 +46,16 @@ const (
 	// reflects the overhead of encoding data into a TXT RR. We leave some
 	// slack in case of IPv6 extension headers or non-Ethernet links.
 	maxEncodedPayload = 1100
+
+	// How long we may wait for downstream data before sending an empty
+	// response. If another query comes in while we are waiting, we'll send
+	// an empty response anyway and restart the delay timer for the next
+	// response.
+	//
+	// This number should be less than 2 seconds, which in 2019 was reported
+	// to be the query timeout of the Quad9 DoH server.
+	// https://dnsencryption.info/imc19-doe.html Section 4.2, Finding 2.4
+	maxResponseDelay = 1 * time.Second
 )
 
 // A base32 encoding without padding.
@@ -415,7 +425,7 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			}
 			nextP = nil
 
-			timer := time.NewTimer(2 * time.Second)
+			timer := time.NewTimer(maxResponseDelay)
 		loop:
 			for {
 				select {
@@ -442,9 +452,10 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 				default:
 					select {
 					case nextRec = <-ch:
-						// If there's another response waiting
-						// to be sent, wait no longer for a
-						// payload for this one.
+						// If there's another response
+						// waiting to be sent, wait no
+						// longer for a payload for this
+						// one.
 						break loop
 					case <-timer.C:
 						break loop
