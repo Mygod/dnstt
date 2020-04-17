@@ -472,6 +472,12 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			log.Printf("resp WireFormat: %v", err)
 			continue
 		}
+		// Truncate if necessary.
+		// https://tools.ietf.org/html/rfc1035#section-4.1.1
+		if len(buf) > maxUDPPayload {
+			buf = buf[:maxUDPPayload]
+			buf[2] |= 0x02 // TC = 1
+		}
 		_, err = dnsConn.WriteTo(buf, rec.Addr)
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
