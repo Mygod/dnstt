@@ -102,12 +102,21 @@ func (c *HTTPPacketConn) send(p []byte) error {
 			// Supply a default.
 			retryAfter = now.Add(10 * time.Second)
 		}
-		c.notBeforeLock.Lock()
-		if retryAfter.After(now) && retryAfter.After(c.notBefore) {
-			log.Printf("got %+q; ceasing sending for %v", resp.Status, retryAfter.Sub(now))
-			c.notBefore = retryAfter
+		if retryAfter.Before(now) {
+			log.Printf("got %+q, but Retry-After is %v in the past",
+				resp.Status, now.Sub(retryAfter))
+		} else {
+			c.notBeforeLock.Lock()
+			if retryAfter.Before(c.notBefore) {
+				log.Printf("got %+q, but Retry-After is %v earlier than already received Retry-After",
+					resp.Status, c.notBefore.Sub(retryAfter))
+			} else {
+				log.Printf("got %+q; ceasing sending for %v",
+					resp.Status, retryAfter.Sub(now))
+				c.notBefore = retryAfter
+			}
+			c.notBeforeLock.Unlock()
 		}
-		c.notBeforeLock.Unlock()
 	}
 
 	return nil
