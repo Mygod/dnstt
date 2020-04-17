@@ -84,7 +84,10 @@ func (c *HTTPPacketConn) send(p []byte) error {
 		}
 		// Ignore err != nil; don't report an error if we at least
 		// managed to send.
-	case http.StatusTooManyRequests:
+	default:
+		// We primarily are thinking of 429 Too Many Requests here, but
+		// any other unexpected response codes will also cause us to
+		// rate-limit ourself and emit a log message.
 		// https://developers.google.com/speed/public-dns/docs/doh/#errors
 		now := time.Now()
 		var retryAfter time.Time
@@ -97,7 +100,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 		}
 		if retryAfter.IsZero() {
 			// Supply a default.
-			retryAfter = now.Add(60 * time.Second)
+			retryAfter = now.Add(10 * time.Second)
 		}
 		c.notBeforeLock.Lock()
 		if retryAfter.After(now) && retryAfter.After(c.notBefore) {
@@ -105,8 +108,6 @@ func (c *HTTPPacketConn) send(p []byte) error {
 			c.notBefore = retryAfter
 		}
 		c.notBeforeLock.Unlock()
-	default:
-		return fmt.Errorf("unknown HTTP response status %+q", resp.Status)
 	}
 
 	return nil
