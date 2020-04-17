@@ -22,7 +22,7 @@ import (
 
 const (
 	idleTimeout         = 10 * time.Minute
-	initPollDelay       = 100 * time.Millisecond
+	initPollDelay       = 500 * time.Millisecond
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
 	// How many bytes of random padding to insert into queries.
