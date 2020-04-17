@@ -29,11 +29,11 @@ func NewHTTPPacketConn(urlString string, numSenders int) (*HTTPPacketConn, error
 		client: &http.Client{
 			Timeout: 1 * time.Minute,
 		},
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, 0),
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
 	}
 	for i := 0; i < numSenders; i++ {
 		go func() {
-			for p := range c.QueuePacketConn.OutgoingQueue(dummyAddr{}) {
+			for p := range c.QueuePacketConn.OutgoingQueue(turbotunnel.DummyAddr{}) {
 				err := c.send(p)
 				if err != nil {
 					log.Printf("sender thread: %v", err)
@@ -55,7 +55,7 @@ func (c *HTTPPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	}
 
 	// Ignore addr.
-	return c.QueuePacketConn.WriteTo(p, dummyAddr{})
+	return c.QueuePacketConn.WriteTo(p, turbotunnel.DummyAddr{})
 }
 
 // send sends a single packet in an HTTP request.
@@ -80,7 +80,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 		}
 		body, err := ioutil.ReadAll(io.LimitReader(resp.Body, 64000))
 		if err == nil {
-			c.QueuePacketConn.QueueIncoming(body, dummyAddr{})
+			c.QueuePacketConn.QueueIncoming(body, turbotunnel.DummyAddr{})
 		}
 		// Ignore err != nil; don't report an error if we at least
 		// managed to send.

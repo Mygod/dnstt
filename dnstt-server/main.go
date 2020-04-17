@@ -490,11 +490,6 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 	return nil
 }
 
-type dummyAddr struct{}
-
-func (addr dummyAddr) Network() string { return "dummy" }
-func (addr dummyAddr) String() string  { return "dummy" }
-
 func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	privkey, pubkey, err := noise.GenerateKeypair()
 	if err != nil {
@@ -504,7 +499,7 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	log.Printf(" pubkey %x", pubkey)
 
 	// Start up the virtual PacketConn for turbotunnel.
-	ttConn := turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout*2)
+	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
 	ln, err := kcp.ServeConn(nil, 0, 0, ttConn)
 	if err != nil {
 		return fmt.Errorf("opening KCP listener: %v", err)

@@ -18,6 +18,7 @@ import (
 	"github.com/xtaci/smux"
 	"www.bamsoftware.com/git/dnstt.git/dns"
 	"www.bamsoftware.com/git/dnstt.git/noise"
+	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
 const (
@@ -218,11 +219,6 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	}
 }
 
-type dummyAddr struct{}
-
-func (addr dummyAddr) Network() string { return "dummy" }
-func (addr dummyAddr) String() string  { return "dummy" }
-
 func main() {
 	var dohURL string
 	var dotAddr string
@@ -269,13 +265,13 @@ func main() {
 	}{
 		// -doh
 		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
-			addr := dummyAddr{}
+			addr := turbotunnel.DummyAddr{}
 			pconn, err := NewHTTPPacketConn(dohURL, 32)
 			return addr, pconn, err
 		}},
 		// -dot
 		{dotAddr, func(s string) (net.Addr, net.PacketConn, error) {
-			addr := dummyAddr{}
+			addr := turbotunnel.DummyAddr{}
 			pconn, err := NewTLSPacketConn(dotAddr)
 			return addr, pconn, err
 		}},

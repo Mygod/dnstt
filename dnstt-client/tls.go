@@ -17,7 +17,7 @@ type TLSPacketConn struct {
 
 func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 	c := &TLSPacketConn{
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, 0),
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
 	}
 	tlsConfig := &tls.Config{}
 	conn, err := tls.Dial("tcp", addr, tlsConfig)
@@ -71,12 +71,12 @@ func (c *TLSPacketConn) recvLoop(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
-		c.QueuePacketConn.QueueIncoming(p, dummyAddr{})
+		c.QueuePacketConn.QueueIncoming(p, turbotunnel.DummyAddr{})
 	}
 }
 
 func (c *TLSPacketConn) sendLoop(conn net.Conn) error {
-	for p := range c.QueuePacketConn.OutgoingQueue(dummyAddr{}) {
+	for p := range c.QueuePacketConn.OutgoingQueue(turbotunnel.DummyAddr{}) {
 		length := uint16(len(p))
 		if int(length) != len(p) {
 			panic(len(p))
@@ -95,5 +95,5 @@ func (c *TLSPacketConn) sendLoop(conn net.Conn) error {
 
 func (c *TLSPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	// Ignore addr.
-	return c.QueuePacketConn.WriteTo(p, dummyAddr{})
+	return c.QueuePacketConn.WriteTo(p, turbotunnel.DummyAddr{})
 }
