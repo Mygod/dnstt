@@ -48,6 +48,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	}
 	req.Header.Set("Accept", "application/dns-message")
 	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("User-Agent", "") // Disable default "Go-http-client/1.1".
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
