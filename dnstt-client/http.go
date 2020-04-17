@@ -8,18 +8,23 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"time"
 
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
 type HTTPPacketConn struct {
 	urlString string
+	client    *http.Client
 	*turbotunnel.QueuePacketConn
 }
 
 func NewHTTPPacketConn(urlString string, numSenders int) (*HTTPPacketConn, error) {
 	c := &HTTPPacketConn{
-		urlString:       urlString,
+		urlString: urlString,
+		client: &http.Client{
+			Timeout: 1 * time.Minute,
+		},
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout),
 	}
 	for i := 0; i < numSenders; i++ {
@@ -43,7 +48,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	}
 	req.Header.Set("Accept", "application/dns-message")
 	req.Header.Set("Content-Type", "application/dns-message")
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}
