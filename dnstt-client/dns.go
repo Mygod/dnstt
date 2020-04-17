@@ -157,25 +157,50 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 	pollTimer := time.NewTimer(pollDelay)
 	for {
 		var p []byte
+		outgoingQueue := c.QueuePacketConn.OutgoingQueue(addr)
+		pollTimerExpired := false
 		select {
-		case <-c.pollChan:
-			if !pollTimer.Stop() {
-				<-pollTimer.C
+		// Give priority to sending an actual data packet from
+		// OutgoingQueue. Only when that is empty, consider a poll.
+		case p = <-outgoingQueue:
+		default:
+			select {
+			case p = <-outgoingQueue:
+			case <-c.pollChan:
+				p = nil
+			case <-pollTimer.C:
+				p = nil
+				pollTimerExpired = true
 			}
-			p = nil
-		case p = <-c.QueuePacketConn.OutgoingQueue(addr):
-			if !pollTimer.Stop() {
-				<-pollTimer.C
+		}
+
+		if len(p) > 0 {
+			// We have an actual data-carrying packet, so discard a
+			// pending poll opportunity, if any.
+			select {
+			case <-c.pollChan:
+			default:
 			}
-			pollDelay = initPollDelay
-		case <-pollTimer.C:
-			p = nil
+		}
+
+		if pollTimerExpired {
+			// We're polling because it's been a while since we last
+			// polled. Increase the poll delay.
 			pollDelay = time.Duration(float64(pollDelay) * pollDelayMultiplier)
 			if pollDelay > maxPollDelay {
 				pollDelay = maxPollDelay
 			}
+		} else {
+			// We're sending an actual data packet, or we're polling
+			// in response to a received packet. Reset the poll
+			// delay to initial.
+			if !pollTimer.Stop() {
+				<-pollTimer.C
+			}
+			pollDelay = initPollDelay
 		}
 		pollTimer.Reset(pollDelay)
+
 		err := c.send(transport, p, addr)
 		if err != nil {
 			log.Printf("send: %v", err)
