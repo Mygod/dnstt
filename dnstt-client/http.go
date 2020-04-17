@@ -25,7 +25,7 @@ func NewHTTPPacketConn(urlString string, numSenders int) (*HTTPPacketConn, error
 		client: &http.Client{
 			Timeout: 1 * time.Minute,
 		},
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout),
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, 0),
 	}
 	for i := 0; i < numSenders; i++ {
 		go func() {

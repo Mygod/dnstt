@@ -28,6 +28,8 @@ type ClientMap struct {
 
 // NewClientMap creates a ClientMap that expires clients after a timeout.
 //
+// If the timeout is 0, clients never expire.
+//
 // The timeout does not have to be kept in sync with smux's idle timeout. If a
 // client is removed from the client map while the smux session is still live,
 // the worst that can happen is a loss of whatever packets were in the send
@@ -41,15 +43,17 @@ func NewClientMap(timeout time.Duration) *ClientMap {
 			byAddr: make(map[net.Addr]int),
 		},
 	}
-	go func() {
-		for {
-			time.Sleep(timeout / 2)
-			now := time.Now()
-			m.lock.Lock()
-			m.inner.removeExpired(now, timeout)
-			m.lock.Unlock()
-		}
-	}()
+	if timeout > 0 {
+		go func() {
+			for {
+				time.Sleep(timeout / 2)
+				now := time.Now()
+				m.lock.Lock()
+				m.inner.removeExpired(now, timeout)
+				m.lock.Unlock()
+			}
+		}()
+	}
 	return m
 }
 

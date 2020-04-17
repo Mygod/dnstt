@@ -29,7 +29,7 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) 
 		clientID:        clientID,
 		domain:          domain,
 		pollChan:        make(chan struct{}),
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, idleTimeout),
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, 0),
 	}
 	go func() {
 		err := c.recvLoop(transport)

@@ -17,7 +17,7 @@ type TLSPacketConn struct {
 
 func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 	c := &TLSPacketConn{
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout),
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(dummyAddr{}, 0),
 	}
 	tlsConfig := &tls.Config{}
 	conn, err := tls.Dial("tcp", addr, tlsConfig)
