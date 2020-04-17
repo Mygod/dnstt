@@ -53,19 +53,26 @@ func (c *HTTPPacketConn) send(p []byte) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/dns-message" {
-		return fmt.Errorf("unexpected response")
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		if ct := resp.Header.Get("Content-Type"); ct != "application/dns-message" {
+			return fmt.Errorf("unknown HTTP response Content-Type %+q", ct)
+		}
+		body, err := ioutil.ReadAll(io.LimitReader(resp.Body, 64000))
+		if err == nil {
+			c.QueuePacketConn.QueueIncoming(body, dummyAddr{})
+		}
+		// Ignore err != nil; don't report an error if we at least
+		// managed to send.
+	default:
+		return fmt.Errorf("unknown HTTP response status %+q", resp.Status)
 	}
-	body, err := ioutil.ReadAll(io.LimitReader(resp.Body, 64000))
-	if err != nil {
-		// Don't report an error if we at least managed to send.
-		return nil
-	}
-	c.QueuePacketConn.QueueIncoming(body, dummyAddr{})
 	return nil
 }
 
 func (c *HTTPPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	// TODO delay to Retry-After
 	// Ignore addr.
 	return c.QueuePacketConn.WriteTo(p, dummyAddr{})
 }
