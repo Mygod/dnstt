@@ -16,13 +16,13 @@ type taggedPacket struct {
 
 // QueuePacketConn implements net.PacketConn by storing queues of packets. There
 // is one incoming queue (where packets are additionally tagged by the source
-// address of the client that sent them). There are many outgoing queues, one
-// for each client address that has been recently seen. The QueueIncoming method
-// inserts a packet into the incoming queue, to eventually be returned by
+// address of the peer that sent them). There are many outgoing queues, one for
+// each remote peer address that has been recently seen. The QueueIncoming
+// method inserts a packet into the incoming queue, to eventually be returned by
 // ReadFrom. WriteTo inserts a packet into an address-specific outgoing queue,
 // which can later by accessed through the OutgoingQueue method.
 type QueuePacketConn struct {
-	clients   *ClientMap
+	remotes   *RemoteMap
 	localAddr net.Addr
 	recvQueue chan taggedPacket
 	closeOnce sync.Once
@@ -31,11 +31,11 @@ type QueuePacketConn struct {
 	err atomic.Value
 }
 
-// NewQueuePacketConn makes a new QueuePacketConn, set to track recent clients
+// NewQueuePacketConn makes a new QueuePacketConn, set to track recent peers
 // for at least a duration of timeout.
 func NewQueuePacketConn(localAddr net.Addr, timeout time.Duration) *QueuePacketConn {
 	return &QueuePacketConn{
-		clients:   NewClientMap(timeout),
+		remotes:   NewRemoteMap(timeout),
 		localAddr: localAddr,
 		recvQueue: make(chan taggedPacket, queueSize),
 		closed:    make(chan struct{}),
@@ -65,7 +65,7 @@ func (c *QueuePacketConn) QueueIncoming(p []byte, addr net.Addr) {
 // creating it if necessary. The contents of the queue will be packets that are
 // written to the address in question using WriteTo.
 func (c *QueuePacketConn) OutgoingQueue(addr net.Addr) <-chan []byte {
-	return c.clients.SendQueue(addr)
+	return c.remotes.SendQueue(addr)
 }
 
 // ReadFrom returns a packet and address previously stored by QueueIncoming.
@@ -95,7 +95,7 @@ func (c *QueuePacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	buf := make([]byte, len(p))
 	copy(buf, p)
 	select {
-	case c.clients.SendQueue(addr) <- buf:
+	case c.remotes.SendQueue(addr) <- buf:
 		return len(buf), nil
 	default:
 		// Drop the outgoing packet if the send queue is full.
