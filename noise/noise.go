@@ -1,9 +1,11 @@
 package noise
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/flynn/noise"
@@ -179,5 +181,24 @@ func GenerateKeypair() (privkey, pubkey []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// pair.Public is already filled in; assert here that PubkeyFromPrivkey
+	// agrees with it.
+	derivedPubkey := PubkeyFromPrivkey(pair.Private)
+	if !bytes.Equal(derivedPubkey, pair.Public) {
+		panic(fmt.Sprintf("expected pubkey %x, got %x", derivedPubkey, pair.Public))
+	}
+
 	return pair.Private, pair.Public, nil
+}
+
+func PubkeyFromPrivkey(privkey []byte) []byte {
+	pair, err := noise.DH25519.GenerateKeypair(bytes.NewReader(privkey))
+	if err != nil {
+		panic(err)
+	}
+	if !bytes.Equal(pair.Private, privkey) {
+		panic("privkey was not as expected")
+	}
+	return pair.Public
 }
