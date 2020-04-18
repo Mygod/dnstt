@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -152,6 +151,15 @@ func dnsNameCapacity(domain dns.Name) int {
 	return capacity
 }
 
+func readKeyFromFile(filename string) ([]byte, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return noise.ReadKey(f)
+}
+
 func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {
 	defer pconn.Close()
 
@@ -228,19 +236,19 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
-  %[1]s [-doh URL|-dot ADDR|-udp ADDR] -pubkey PUBKEY DOMAIN LOCALADDR
+  %[1]s [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
 
 Examples:
-  %[1]s -doh https://resolver.example/dns-query -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff t.example.com 127.0.0.1:7000
-  %[1]s -dot resolver.example:853 -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff t.example.com 127.0.0.1:7000
+  %[1]s -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+  %[1]s -dot resolver.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
 
 `, os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
 	flag.StringVar(&dotAddr, "dot", "", "address of DoT resolver")
-	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", hex.EncodedLen(noise.KeyLen)))
-	flag.StringVar(&pubkeyString, "pubkey-file", "", "read server public key from file")
+	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", noise.KeyLen*2))
+	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "read server public key from file")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
 	flag.Parse()
 
@@ -262,19 +270,26 @@ Examples:
 	}
 
 	var pubkey []byte
-	if pubkeyString != "" {
+	if pubkeyFilename != "" && pubkeyString != "" {
+		fmt.Fprintf(os.Stderr, "only one of -pubkey and -pubkey-file may be used\n")
+		os.Exit(1)
+	} else if pubkeyFilename != "" {
 		var err error
-		pubkey, err = hex.DecodeString(pubkeyString)
-		if err == nil && len(pubkey) != noise.KeyLen {
-			err = fmt.Errorf("length is %d, expected %d", len(pubkey), noise.KeyLen)
+		pubkey, err = readKeyFromFile(pubkeyFilename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cannot read pubkey from file: %v\n", err)
+			os.Exit(1)
 		}
+	} else if pubkeyString != "" {
+		var err error
+		pubkey, err = noise.DecodeKey(pubkeyString)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "pubkey format error: %v\n", err)
 			os.Exit(1)
 		}
 	}
 	if len(pubkey) == 0 {
-		fmt.Fprintf(os.Stderr, "the -pubkey option is required\n")
+		fmt.Fprintf(os.Stderr, "the -pubkey or -pubkey-file option is required\n")
 		os.Exit(1)
 	}
 

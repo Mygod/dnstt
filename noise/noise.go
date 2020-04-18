@@ -1,12 +1,15 @@
 package noise
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/flynn/noise"
 )
@@ -204,4 +207,49 @@ func PubkeyFromPrivkey(privkey []byte) []byte {
 		panic("privkey was not as expected")
 	}
 	return pair.Public
+}
+
+// ReadKey reads a hex-encoded key from r. r must consist of a single line, with
+// or without a '\n' line terminator. The line must consist of KeyLen
+// hex-encoded bytes.
+func ReadKey(r io.Reader) ([]byte, error) {
+	br := bufio.NewReader(io.LimitReader(r, 100))
+	line, err := br.ReadString('\n')
+	if err == io.EOF {
+		err = nil
+	}
+	if err == nil {
+		// Check that we're at EOF.
+		_, err = br.ReadByte()
+		if err == io.EOF {
+			err = nil
+		} else if err == nil {
+			err = fmt.Errorf("file contains more than one line")
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimSuffix(line, "\n")
+	return DecodeKey(line)
+}
+
+// WriteKey writes the hex-encoded key in a single line to w.
+func WriteKey(w io.Writer, key []byte) error {
+	_, err := fmt.Fprintf(w, "%x\n", key)
+	return err
+}
+
+// DecodeKey decodes a hex-encoded private or public key.
+func DecodeKey(s string) ([]byte, error) {
+	key, err := hex.DecodeString(s)
+	if err == nil && len(key) != KeyLen {
+		err = fmt.Errorf("length is %d, expected %d", len(key), KeyLen)
+	}
+	return key, err
+}
+
+// DecodeKey decodes a hex-encoded private or public key.
+func EncodeKey(key []byte) string {
+	return hex.EncodeToString(key)
 }

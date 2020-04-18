@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -491,14 +490,83 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 	return nil
 }
 
-func generateKeypair() error {
+func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
+	// Filenames to delete in case of error (avoid leaving partially written
+	// files).
+	var toDelete []string
+	defer func() {
+		for _, filename := range toDelete {
+			fmt.Fprintf(os.Stderr, "deleting partially written file %s\n", filename)
+			if closeErr := os.Remove(filename); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "cannot remove %s: %v\n", filename, closeErr)
+				if err == nil {
+					err = closeErr
+				}
+			}
+		}
+	}()
+
 	privkey, pubkey, err := noise.GenerateKeypair()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("privkey: %x\n", privkey)
-	fmt.Printf("pubkey:  %x\n", pubkey)
+
+	if privkeyFilename != "" {
+		// Save the privkey to a file.
+		f, err := os.Create(privkeyFilename)
+		if err != nil {
+			return err
+		}
+		toDelete = append(toDelete, privkeyFilename)
+		err = noise.WriteKey(f, privkey)
+		if err2 := f.Close(); err == nil {
+			err = err2
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if pubkeyFilename != "" {
+		// Save the pubkey to a file.
+		f, err := os.Create(pubkeyFilename)
+		if err != nil {
+			return err
+		}
+		toDelete = append(toDelete, pubkeyFilename)
+		err = noise.WriteKey(f, pubkey)
+		if err2 := f.Close(); err == nil {
+			err = err2
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	// All good, allow the written files to remain.
+	toDelete = nil
+
+	if privkeyFilename != "" {
+		fmt.Printf("privkey written to %s\n", privkeyFilename)
+	} else {
+		fmt.Printf("privkey %x\n", privkey)
+	}
+	if pubkeyFilename != "" {
+		fmt.Printf("pubkey  written to %s\n", pubkeyFilename)
+	} else {
+		fmt.Printf("pubkey  %x\n", pubkey)
+	}
+
 	return nil
+}
+
+func readKeyFromFile(filename string) ([]byte, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return noise.ReadKey(f)
 }
 
 func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, udpAddr string) error {
@@ -542,23 +610,27 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, udpAddr str
 
 func main() {
 	var genKey bool
+	var privkeyFilename string
 	var privkeyString string
+	var pubkeyFilename string
 	var udpAddr string
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
-  %[1]s -gen-key
-  %[1]s -udp ADDR -privkey PRIVKEY DOMAIN UPSTREAMADDR
+  %[1]s -gen-key -privkey-file PRIVKEYFILE -pubkey-file PUBKEYFILE
+  %[1]s -udp ADDR -privkey-file PRIVKEYFILE DOMAIN UPSTREAMADDR
 
 Example:
-  %[1]s -gen-key
-  %[1]s -udp 127.0.0.1:5300 -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef server.key t.example.com 127.0.0.1:8000
+  %[1]s -gen-key -privkey-file server.key -pubkey-file server.pub
+  %[1]s -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 
 `, os.Args[0])
 		flag.PrintDefaults()
 	}
-	flag.BoolVar(&genKey, "gen-key", false, "generate a server keypair; print to stdout")
-	flag.StringVar(&privkeyString, "privkey", "", fmt.Sprintf("server private key (%d hex digits)", hex.EncodedLen(noise.KeyLen)))
+	flag.BoolVar(&genKey, "gen-key", false, "generate a server keypair; print to stdout or save to files")
+	flag.StringVar(&privkeyString, "privkey", "", fmt.Sprintf("server private key (%d hex digits)", noise.KeyLen*2))
+	flag.StringVar(&privkeyFilename, "privkey-file", "", "read server private key from file (with -gen-key, write to file)")
+	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "with -gen-key, write server public key to file")
 	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on (required)")
 	flag.Parse()
 
@@ -570,7 +642,7 @@ Example:
 			flag.Usage()
 			os.Exit(1)
 		}
-		if err := generateKeypair(); err != nil {
+		if err := generateKeypair(privkeyFilename, pubkeyFilename); err != nil {
 			fmt.Fprintf(os.Stderr, "cannot generate keypair: %v\n", err)
 			os.Exit(1)
 		}
@@ -591,13 +663,25 @@ Example:
 			os.Exit(1)
 		}
 
+		if pubkeyFilename != "" {
+			fmt.Fprintf(os.Stderr, "-pubkey-file may only be used with -gen-key\n")
+			os.Exit(1)
+		}
+
 		var privkey []byte
-		if privkeyString != "" {
+		if privkeyFilename != "" && privkeyString != "" {
+			fmt.Fprintf(os.Stderr, "only one of -privkey and -privkey-file may be used\n")
+			os.Exit(1)
+		} else if privkeyFilename != "" {
 			var err error
-			privkey, err = hex.DecodeString(privkeyString)
-			if err == nil && len(privkey) != noise.KeyLen {
-				err = fmt.Errorf("length is %d, expected %d", len(privkey), noise.KeyLen)
+			privkey, err = readKeyFromFile(privkeyFilename)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "cannot read privkey from file: %v\n", err)
+				os.Exit(1)
 			}
+		} else if privkeyString != "" {
+			var err error
+			privkey, err = noise.DecodeKey(privkeyString)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "privkey format error: %v\n", err)
 				os.Exit(1)
@@ -605,7 +689,7 @@ Example:
 		}
 		if len(privkey) == 0 {
 			log.Println("generating a temporary one-time keypair")
-			log.Println("use the -privkey option for a persistent server keypair")
+			log.Println("use the -privkey or -privkey-file option for a persistent server keypair")
 			var err error
 			privkey, _, err = noise.GenerateKeypair()
 			if err != nil {
