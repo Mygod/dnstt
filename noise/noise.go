@@ -11,6 +11,9 @@ import (
 	"github.com/flynn/noise"
 )
 
+// The length of public and private keys as returned by GenerateKeypair.
+const KeyLen = 32
+
 func readMessage(r io.Reader) ([]byte, error) {
 	var length uint16
 	err := binary.Read(r, binary.BigEndian, &length)

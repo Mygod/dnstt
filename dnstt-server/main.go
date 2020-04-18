@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -490,13 +491,18 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 	return nil
 }
 
-func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
+func generateKeypair() error {
 	privkey, pubkey, err := noise.GenerateKeypair()
 	if err != nil {
 		return err
 	}
-	log.Printf("privkey %x", privkey)
-	log.Printf(" pubkey %x", pubkey)
+	fmt.Printf("privkey: %x\n", privkey)
+	fmt.Printf("pubkey:  %x\n", pubkey)
+	return nil
+}
+
+func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, udpAddr string) error {
+	log.Printf("pubkey %x", pubkey)
 
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
@@ -535,34 +541,83 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 }
 
 func main() {
+	var genKey bool
+	var privkeyString string
 	var udpAddr string
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s -udp ADDR DOMAIN UPSTREAMADDR\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
+  %[1]s -gen-key
+  %[1]s -udp ADDR -privkey PRIVKEY DOMAIN UPSTREAMADDR
+
+Example:
+  %[1]s -gen-key
+  %[1]s -udp 127.0.0.1:5300 -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef server.key t.example.com 127.0.0.1:8000
+
+`, os.Args[0])
 		flag.PrintDefaults()
 	}
+	flag.BoolVar(&genKey, "gen-key", false, "generate a server keypair; print to stdout")
+	flag.StringVar(&privkeyString, "privkey", "", fmt.Sprintf("server private key (%d hex digits)", hex.EncodedLen(noise.KeyLen)))
 	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on (required)")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
-	if flag.NArg() != 2 {
-		flag.Usage()
-		os.Exit(1)
-	}
-	domain, err := dns.ParseName(flag.Arg(0))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
-		os.Exit(1)
-	}
-	upstream, err := net.ResolveTCPAddr("tcp", flag.Arg(1))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cannot resolve %+q: %v\n", flag.Arg(1), err)
-		os.Exit(1)
-	}
+	if genKey {
+		// -gen-key mode.
+		if flag.NArg() != 0 || privkeyString != "" || udpAddr != "" {
+			flag.Usage()
+			os.Exit(1)
+		}
+		if err := generateKeypair(); err != nil {
+			fmt.Fprintf(os.Stderr, "cannot generate keypair: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Ordinary server mode.
+		if flag.NArg() != 2 {
+			flag.Usage()
+			os.Exit(1)
+		}
+		domain, err := dns.ParseName(flag.Arg(0))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
+			os.Exit(1)
+		}
+		upstream, err := net.ResolveTCPAddr("tcp", flag.Arg(1))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cannot resolve %+q: %v\n", flag.Arg(1), err)
+			os.Exit(1)
+		}
 
-	err = run(domain, upstream, udpAddr)
-	if err != nil {
-		log.Fatal(err)
+		var privkey []byte
+		if privkeyString != "" {
+			var err error
+			privkey, err = hex.DecodeString(privkeyString)
+			if err == nil && len(privkey) != noise.KeyLen {
+				err = fmt.Errorf("length is %d, expected %d", len(privkey), noise.KeyLen)
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "privkey format error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		if len(privkey) == 0 {
+			log.Println("generating a temporary one-time keypair")
+			log.Println("use the -privkey option for a persistent server keypair")
+			var err error
+			privkey, _, err = noise.GenerateKeypair()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
+		pubkey := noise.PubkeyFromPrivkey(privkey)
+
+		err = run(privkey, pubkey, domain, upstream, udpAddr)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }

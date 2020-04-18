@@ -222,36 +222,59 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 func main() {
 	var dohURL string
 	var dotAddr string
+	var pubkeyFilename string
+	var pubkeyString string
 	var udpAddr string
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [-doh URL|-dot ADDR|-udp ADDR] PUBKEY DOMAIN LOCALADDR\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
+  %[1]s [-doh URL|-dot ADDR|-udp ADDR] -pubkey PUBKEY DOMAIN LOCALADDR
+
+Examples:
+  %[1]s -doh https://resolver.example/dns-query -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff t.example.com 127.0.0.1:7000
+  %[1]s -dot resolver.example:853 -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff t.example.com 127.0.0.1:7000
+
+`, os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
 	flag.StringVar(&dotAddr, "dot", "", "address of DoT resolver")
+	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", hex.EncodedLen(noise.KeyLen)))
+	flag.StringVar(&pubkeyString, "pubkey-file", "", "read server public key from file")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
-	if flag.NArg() != 3 {
+	if flag.NArg() != 2 {
 		flag.Usage()
 		os.Exit(1)
 	}
-	pubkey, err := hex.DecodeString(flag.Arg(0))
+	domain, err := dns.ParseName(flag.Arg(0))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid pubkey %+q: %v\n", flag.Arg(0), err)
+		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
 		os.Exit(1)
 	}
-	domain, err := dns.ParseName(flag.Arg(1))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(1), err)
-		os.Exit(1)
-	}
-	localAddr, err := net.ResolveTCPAddr("tcp", flag.Arg(2))
+	localAddr, err := net.ResolveTCPAddr("tcp", flag.Arg(1))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	var pubkey []byte
+	if pubkeyString != "" {
+		var err error
+		pubkey, err = hex.DecodeString(pubkeyString)
+		if err == nil && len(pubkey) != noise.KeyLen {
+			err = fmt.Errorf("length is %d, expected %d", len(pubkey), noise.KeyLen)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pubkey format error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if len(pubkey) == 0 {
+		fmt.Fprintf(os.Stderr, "the -pubkey option is required\n")
 		os.Exit(1)
 	}
 
