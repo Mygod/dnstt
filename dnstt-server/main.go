@@ -17,6 +17,7 @@ import (
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/smux"
 	"www.bamsoftware.com/git/dnstt.git/dns"
+	"www.bamsoftware.com/git/dnstt.git/noise"
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
@@ -84,11 +85,17 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
 
 // acceptStreams layers an smux.Session on a KCP connection and awaits streams
 // on it. It passes each stream to handleStream.
-func acceptStreams(conn *kcp.UDPSession, upstream *net.TCPAddr) error {
+func acceptStreams(conn io.ReadWriteCloser, privkey, pubkey []byte, upstream *net.TCPAddr) error {
+	// Put a Noise channel on top of the KCP conn.
+	rw, err := noise.NewServer(conn, privkey, pubkey)
+	if err != nil {
+		return err
+	}
+
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.Version = 2
 	smuxConfig.KeepAliveTimeout = idleTimeout
-	sess, err := smux.Server(conn, smuxConfig)
+	sess, err := smux.Server(rw, smuxConfig)
 	if err != nil {
 		return err
 	}
@@ -113,7 +120,7 @@ func acceptStreams(conn *kcp.UDPSession, upstream *net.TCPAddr) error {
 
 // acceptSessions listens for incoming KCP connections and passes them to
 // acceptStreams.
-func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
+func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, upstream *net.TCPAddr) error {
 	for {
 		conn, err := ln.AcceptKCP()
 		if err != nil {
@@ -139,7 +146,7 @@ func acceptSessions(ln *kcp.Listener, upstream *net.TCPAddr) error {
 		}
 		go func() {
 			defer conn.Close()
-			err := acceptStreams(conn, upstream)
+			err := acceptStreams(conn, privkey, pubkey, upstream)
 			if err != nil {
 				log.Printf("acceptStreams: %v\n", err)
 			}
@@ -472,6 +479,13 @@ func (addr dummyAddr) Network() string { return "dummy" }
 func (addr dummyAddr) String() string  { return "dummy" }
 
 func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
+	privkey, pubkey, err := noise.GenerateKeypair()
+	if err != nil {
+		return err
+	}
+	log.Printf("privkey %x", privkey)
+	log.Printf(" pubkey %x", pubkey)
+
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(dummyAddr{}, idleTimeout*2)
 	ln, err := kcp.ServeConn(nil, 0, 0, ttConn)
@@ -480,7 +494,7 @@ func run(domain dns.Name, upstream net.Addr, udpAddr string) error {
 	}
 	defer ln.Close()
 	go func() {
-		err := acceptSessions(ln, upstream.(*net.TCPAddr))
+		err := acceptSessions(ln, privkey, pubkey, upstream.(*net.TCPAddr))
 		if err != nil {
 			log.Printf("acceptSessions: %v\n", err)
 		}

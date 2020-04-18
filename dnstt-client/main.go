@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/smux"
 	"www.bamsoftware.com/git/dnstt.git/dns"
+	"www.bamsoftware.com/git/dnstt.git/noise"
 )
 
 const (
@@ -149,7 +151,7 @@ func dnsNameCapacity(domain dns.Name) int {
 	return capacity
 }
 
-func run(domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {
+func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {
 	defer pconn.Close()
 
 	// Open a KCP conn on the PacketConn.
@@ -177,11 +179,17 @@ func run(domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net
 		panic(rc)
 	}
 
-	// Start a smux session on the KCP conn.
+	// Put a Noise channel on top of the KCP conn.
+	rw, err := noise.NewClient(conn, pubkey)
+	if err != nil {
+		return err
+	}
+
+	// Start a smux session on the Noise channel.
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.Version = 2
 	smuxConfig.KeepAliveTimeout = idleTimeout
-	sess, err := smux.Client(conn, smuxConfig)
+	sess, err := smux.Client(rw, smuxConfig)
 	if err != nil {
 		return fmt.Errorf("opening smux session: %v", err)
 	}
@@ -220,7 +228,7 @@ func main() {
 	var udpAddr string
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [-doh URL|-udp ADDR] DOMAIN LOCALADDR\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [-doh URL|-udp ADDR] PUBKEY DOMAIN LOCALADDR\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
@@ -229,16 +237,21 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
-	if flag.NArg() != 2 {
+	if flag.NArg() != 3 {
 		flag.Usage()
 		os.Exit(1)
 	}
-	domain, err := dns.ParseName(flag.Arg(0))
+	pubkey, err := hex.DecodeString(flag.Arg(0))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
+		fmt.Fprintf(os.Stderr, "invalid pubkey %+q: %v\n", flag.Arg(0), err)
 		os.Exit(1)
 	}
-	localAddr, err := net.ResolveTCPAddr("tcp", flag.Arg(1))
+	domain, err := dns.ParseName(flag.Arg(1))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(1), err)
+		os.Exit(1)
+	}
+	localAddr, err := net.ResolveTCPAddr("tcp", flag.Arg(2))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -290,7 +303,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = run(domain, localAddr, remoteAddr, pconn)
+	err = run(pubkey, domain, localAddr, remoteAddr, pconn)
 	if err != nil {
 		log.Fatal(err)
 	}
