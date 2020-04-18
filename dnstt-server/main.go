@@ -541,7 +541,7 @@ func main() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s -udp ADDR DOMAIN UPSTREAMADDR\n", os.Args[0])
 		flag.PrintDefaults()
 	}
-	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on")
+	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on (required)")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
