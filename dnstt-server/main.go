@@ -102,8 +102,9 @@ var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 // generateKeypair generates a private key and the corresponding public key. If
 // privkeyFilename and pubkeyFilename are respectively empty, it prints the
 // corresponding key to standard output; otherwise it saves the key to the given
-// file name. In case of any error, it attempts to delete any files it has
-// created before returning.
+// file name. The private key is saved with mode 0400 and the public key is
+// saved with 0666 (before umask). In case of any error, it attempts to delete
+// any files it has created before returning.
 func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
 	// Filenames to delete in case of error (avoid leaving partially written
 	// files).
@@ -127,7 +128,7 @@ func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
 
 	if privkeyFilename != "" {
 		// Save the privkey to a file.
-		f, err := os.Create(privkeyFilename)
+		f, err := os.OpenFile(privkeyFilename, os.O_RDWR|os.O_CREATE, 0400)
 		if err != nil {
 			return err
 		}
