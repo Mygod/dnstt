@@ -161,6 +161,12 @@ func readKeyFromFile(filename string) ([]byte, error) {
 func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {
 	defer pconn.Close()
 
+	mtu := dnsNameCapacity(domain) - 8 - 1 - numPadding - 1 // clientid + padding length prefix + padding + data length prefix
+	if mtu < 80 {
+		return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
+	}
+	log.Printf("MTU %d\n", mtu)
+
 	// Open a KCP conn on the PacketConn.
 	conn, err := kcp.NewConn2(remoteAddr, nil, 0, 0, pconn)
 	if err != nil {
@@ -181,11 +187,6 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 		0, // default resend
 		1, // nc=1 => congestion window off
 	)
-	mtu := dnsNameCapacity(domain) - 8 - 1 - numPadding - 1 // clientid + padding length prefix + padding + data length prefix
-	if mtu < 80 {
-		return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
-	}
-	log.Printf("MTU %d\n", mtu)
 	if rc := conn.SetMtu(mtu); !rc {
 		panic(rc)
 	}
