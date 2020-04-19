@@ -440,7 +440,11 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if question.Type != dns.RRTypeTXT {
 		// We only support QTYPE == TXT.
 		resp.Flags |= dns.RcodeNameError
-		log.Printf("NXDOMAIN: QTYPE %d != TXT", question.Type)
+		// No log message here; it's common for recursive resolvers to
+		// send NS or A queries when the client only asked for a TXT. I
+		// suspect this is related to QNAME minimization, but I'm not
+		// sure. https://tools.ietf.org/html/rfc7816
+		// log.Printf("NXDOMAIN: QTYPE %d != TXT", question.Type)
 		return resp, clientID, nil
 	}
 
