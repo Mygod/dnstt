@@ -594,8 +594,8 @@ func readKeyFromFile(filename string) ([]byte, error) {
 	return noise.ReadKey(f)
 }
 
-func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, udpAddr string) error {
-	log.Printf("pubkey %x", pubkey)
+func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net.PacketConn) error {
+	defer dnsConn.Close()
 
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
@@ -611,26 +611,9 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, udpAddr str
 		}
 	}()
 
-	var wg sync.WaitGroup
+	log.Printf("pubkey %x", pubkey)
 
-	if udpAddr != "" {
-		dnsConn, err := net.ListenPacket("udp", udpAddr)
-		if err != nil {
-			return fmt.Errorf("opening UDP listener: %v", err)
-		}
-		wg.Add(1)
-		go func() {
-			defer dnsConn.Close()
-			defer wg.Done()
-			err := loop(dnsConn, domain, ttConn)
-			if err != nil {
-				log.Printf("error in UDP loop: %v\n", err)
-			}
-		}()
-	}
-
-	wg.Wait()
-	return nil
+	return loop(dnsConn, domain, ttConn)
 }
 
 func main() {
@@ -688,6 +671,16 @@ Example:
 			os.Exit(1)
 		}
 
+		if udpAddr == "" {
+			fmt.Fprintf(os.Stderr, "the -udp option is required\n")
+			os.Exit(1)
+		}
+		dnsConn, err := net.ListenPacket("udp", udpAddr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "opening UDP listener: %v\n", err)
+			os.Exit(1)
+		}
+
 		if pubkeyFilename != "" {
 			fmt.Fprintf(os.Stderr, "-pubkey-file may only be used with -gen-key\n")
 			os.Exit(1)
@@ -724,7 +717,7 @@ Example:
 		}
 		pubkey := noise.PubkeyFromPrivkey(privkey)
 
-		err = run(privkey, pubkey, domain, upstream, udpAddr)
+		err = run(privkey, pubkey, domain, upstream, dnsConn)
 		if err != nil {
 			log.Fatal(err)
 		}
