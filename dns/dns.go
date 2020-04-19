@@ -144,6 +144,11 @@ type Message struct {
 	Additional []RR
 }
 
+// Opcode extracts the OPCODE part of the Flags field.
+func (msg *Message) Opcode() uint16 {
+	return (msg.Flags >> 11) & 0xf
+}
+
 // Rcode extracts the RCODE part of the Flags field.
 func (msg *Message) Rcode() uint16 {
 	return msg.Flags & 0x000f

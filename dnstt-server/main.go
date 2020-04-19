@@ -295,10 +295,10 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	}
 	resp.Flags |= 0x0400 // AA = 1
 
-	if query.Flags&0x7800 != 0 {
+	if query.Opcode() != 0 {
 		// We don't support OPCODE != QUERY.
 		resp.Flags |= dns.RcodeNotImplemented
-		log.Printf("NOTIMPL: unrecognized OPCODE %d", (query.Flags>>11)&0xf)
+		log.Printf("NOTIMPL: unrecognized OPCODE %d", query.Opcode())
 		return resp, clientID, nil
 	}
 
