@@ -62,10 +62,10 @@ const (
 var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // handleStream bidirectionally connects a client stream with the ORPort.
-func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
+func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error {
 	conn, err := net.DialTCP("tcp", nil, upstream)
 	if err != nil {
-		return err
+		return fmt.Errorf("stream %08x:%d connect upstream: %v", conv, stream.ID(), err)
 	}
 	defer conn.Close()
 
@@ -75,7 +75,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
 		defer wg.Done()
 		_, err := io.Copy(stream, conn)
 		if err != nil {
-			log.Printf("copy stream←upstream: %v\n", err)
+			log.Printf("stream %08x:%d copy stream←upstream: %v\n", conv, stream.ID(), err)
 		}
 		stream.Close()
 	}()
@@ -84,7 +84,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
 		defer wg.Done()
 		_, err := io.Copy(conn, stream)
 		if err != nil {
-			log.Printf("copy upstream←stream: %v\n", err)
+			log.Printf("stream %08x:%d copy upstream←stream: %v\n", conv, stream.ID(), err)
 		}
 		conn.Close()
 	}()
@@ -95,7 +95,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr) error {
 
 // acceptStreams layers an smux.Session on a KCP connection and awaits streams
 // on it. It passes each stream to handleStream.
-func acceptStreams(conn io.ReadWriteCloser, privkey, pubkey []byte, upstream *net.TCPAddr) error {
+func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.TCPAddr) error {
 	// Put a Noise channel on top of the KCP conn.
 	rw, err := noise.NewServer(conn, privkey, pubkey)
 	if err != nil {
@@ -118,11 +118,15 @@ func acceptStreams(conn io.ReadWriteCloser, privkey, pubkey []byte, upstream *ne
 			}
 			return err
 		}
+		log.Printf("begin stream %08x:%d", conn.GetConv(), stream.ID())
 		go func() {
-			defer stream.Close()
-			err := handleStream(stream, upstream)
+			defer func() {
+				log.Printf("end stream %08x:%d", conn.GetConv(), stream.ID())
+				stream.Close()
+			}()
+			err := handleStream(stream, upstream, conn.GetConv())
 			if err != nil {
-				log.Printf("handleStream: %v\n", err)
+				log.Printf("stream %08x:%d handleStream: %v\n", conn.GetConv(), stream.ID(), err)
 			}
 		}()
 	}
@@ -139,6 +143,7 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, upstream *net.TCPA
 			}
 			return err
 		}
+		log.Printf("begin session %08x", conn.GetConv())
 		// Permit coalescing the payloads of consecutive sends.
 		conn.SetStreamMode(true)
 		// Disable the dynamic congestion window (limit only by the
@@ -155,10 +160,13 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, upstream *net.TCPA
 			panic(rc)
 		}
 		go func() {
-			defer conn.Close()
+			defer func() {
+				log.Printf("end session %08x", conn.GetConv())
+				conn.Close()
+			}()
 			err := acceptStreams(conn, privkey, pubkey, upstream)
 			if err != nil {
-				log.Printf("acceptStreams: %v\n", err)
+				log.Printf("session %08x acceptStreams: %v\n", conn.GetConv(), err)
 			}
 		}()
 	}

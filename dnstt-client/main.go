@@ -95,16 +95,16 @@ func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
 	return payload
 }
 
-func handle(local *net.TCPConn, sess *smux.Session) error {
+func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	stream, err := sess.OpenStream()
 	if err != nil {
-		return fmt.Errorf("opening stream: %v", err)
+		return fmt.Errorf("session %08x opening stream: %v", conv, err)
 	}
-	log.Printf("begin stream %v", stream.ID())
 	defer func() {
-		log.Printf("end stream %v", stream.ID())
+		log.Printf("end stream %08x:%d", conv, stream.ID())
 		stream.Close()
 	}()
+	log.Printf("begin stream %08x:%d", conv, stream.ID())
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -112,7 +112,7 @@ func handle(local *net.TCPConn, sess *smux.Session) error {
 		defer wg.Done()
 		_, err := io.Copy(stream, local)
 		if err != nil {
-			log.Printf("copy stream←local: %v\n", err)
+			log.Printf("stream %08x:%d copy stream←local: %v\n", conv, stream.ID(), err)
 		}
 		stream.Close()
 	}()
@@ -121,7 +121,7 @@ func handle(local *net.TCPConn, sess *smux.Session) error {
 		defer wg.Done()
 		_, err := io.Copy(local, stream)
 		if err != nil {
-			log.Printf("copy local←stream: %v\n", err)
+			log.Printf("stream %08x:%d copy local←stream: %v\n", conv, stream.ID(), err)
 		}
 		local.Close()
 	}()
@@ -166,7 +166,11 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	if err != nil {
 		return fmt.Errorf("opening KCP conn: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		log.Printf("end session %08x", conn.GetConv())
+		conn.Close()
+	}()
+	log.Printf("begin session %08x", conn.GetConv())
 	// Permit coalescing the payloads of consecutive sends.
 	conn.SetStreamMode(true)
 	// Disable the dynamic congestion window (limit only by the
@@ -217,7 +221,7 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 		}
 		go func() {
 			defer local.Close()
-			err := handle(local.(*net.TCPConn), sess)
+			err := handle(local.(*net.TCPConn), sess, conn.GetConv())
 			if err != nil {
 				log.Printf("handle: %v\n", err)
 			}
