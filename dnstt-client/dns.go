@@ -59,6 +59,58 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) 
 	return c
 }
 
+func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
+	if resp.Flags&0x8000 != 0x8000 {
+		// QR != 1, this is not a response.
+		return nil
+	}
+	if resp.Flags&0x000f != dns.RcodeNoError {
+		return nil
+	}
+
+	if len(resp.Answer) != 1 {
+		return nil
+	}
+	answer := resp.Answer[0]
+
+	_, ok := answer.Name.TrimSuffix(domain)
+	if !ok {
+		// Not the name we are expecting.
+		return nil
+	}
+
+	if answer.Type != dns.RRTypeTXT {
+		// We only support TYPE == TXT.
+		return nil
+	}
+	payload, err := dns.DecodeRDataTXT(answer.Data)
+	if err != nil {
+		return nil
+	}
+
+	return payload
+}
+
+func nextPacket(r *bytes.Reader) ([]byte, error) {
+	eof := func(err error) error {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+
+	for {
+		var n uint16
+		err := binary.Read(r, binary.BigEndian, &n)
+		if err != nil {
+			return nil, err
+		}
+		p := make([]byte, n)
+		_, err = io.ReadFull(r, p)
+		return p, eof(err)
+	}
+}
+
 func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 	for {
 		var buf [4096]byte
@@ -101,6 +153,19 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 			c.QueuePacketConn.QueueIncoming(p, addr)
 		}
 	}
+}
+
+func chunks(p []byte, n int) [][]byte {
+	var result [][]byte
+	for len(p) > 0 {
+		sz := len(p)
+		if sz > n {
+			sz = n
+		}
+		result = append(result, p[:sz])
+		p = p[sz:]
+	}
+	return result
 }
 
 // send sends a single packet in a DNS query.

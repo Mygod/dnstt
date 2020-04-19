@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -25,71 +23,6 @@ const (
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
 )
-
-func chunks(p []byte, n int) [][]byte {
-	var result [][]byte
-	for len(p) > 0 {
-		sz := len(p)
-		if sz > n {
-			sz = n
-		}
-		result = append(result, p[:sz])
-		p = p[sz:]
-	}
-	return result
-}
-
-func nextPacket(r *bytes.Reader) ([]byte, error) {
-	eof := func(err error) error {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-		return err
-	}
-
-	for {
-		var n uint16
-		err := binary.Read(r, binary.BigEndian, &n)
-		if err != nil {
-			return nil, err
-		}
-		p := make([]byte, n)
-		_, err = io.ReadFull(r, p)
-		return p, eof(err)
-	}
-}
-
-func dnsResponsePayload(resp *dns.Message, domain dns.Name) []byte {
-	if resp.Flags&0x8000 != 0x8000 {
-		// QR != 1, this is not a response.
-		return nil
-	}
-	if resp.Flags&0x000f != dns.RcodeNoError {
-		return nil
-	}
-
-	if len(resp.Answer) != 1 {
-		return nil
-	}
-	answer := resp.Answer[0]
-
-	_, ok := answer.Name.TrimSuffix(domain)
-	if !ok {
-		// Not the name we are expecting.
-		return nil
-	}
-
-	if answer.Type != dns.RRTypeTXT {
-		// We only support TYPE == TXT.
-		return nil
-	}
-	payload, err := dns.DecodeRDataTXT(answer.Data)
-	if err != nil {
-		return nil
-	}
-
-	return payload
-}
 
 func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	stream, err := sess.OpenStream()
