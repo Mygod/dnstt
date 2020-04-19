@@ -26,10 +26,17 @@ const (
 	responseTTL = 60
 
 	// We don't send UDP payloads larger than this, in an attempt to avoid
-	// network-layer fragmentation. 40 bytes is the size of an IPv6 header
-	// (though without any extension headers). 8 bytes is the size of a UDP
-	// header.
-	maxUDPPayload = 1500 - 40 - 8
+	// network-layer fragmentation. 1280 is the minimum IPv6 MTU, 40 bytes
+	// is the size of an IPv6 header (though without any extension headers),
+	// and 8 bytes is the size of a UDP header.
+	//
+	// https://dnsflagday.net/2020/#message-size-considerations
+	// "An EDNS buffer size of 1232 bytes will avoid fragmentation on nearly
+	// all current networks."
+	//
+	// On 2020-04-19, the Quad9 resolver was seen to have a UDP payload size
+	// of 1232. Cloudflare's was 1452, and Google's was 4096.
+	maxUDPPayload = 1280 - 40 - 8
 
 	// We may have a variable amount of room in which to encode downstream
 	// packets in each response, because we must echo the query's Question
@@ -38,14 +45,13 @@ const (
 	// which no packet will exceed. We choose that maximum to keep the UDP
 	// payload size under maxUDPPayload, even in the worst case of a
 	// maximum-length name in the Question section. The precise limit is
-	// 1153 = (maxUDPPayload - 294) * 255/256, where 294 is the size of a
+	// 934 = (maxUDPPayload - 294) * 255/256, where 294 is the size of a
 	// DNS message containing a Question section with a name that is 255
 	// bytes long, an Answer section with a single TXT RR whose name is a
 	// compressed pointer to the name in the Question section and no data,
 	// and an Additional section with an OPT RR for EDNS(0); and 255/256
-	// reflects the overhead of encoding data into a TXT RR. We leave some
-	// slack in case of IPv6 extension headers or non-Ethernet links.
-	maxEncodedPayload = 1100
+	// reflects the overhead of encoding data into a TXT RR.
+	maxEncodedPayload = 930
 
 	// How long we may wait for downstream data before sending an empty
 	// response. If another query comes in while we are waiting, we'll send

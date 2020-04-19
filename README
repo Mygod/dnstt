@@ -12,8 +12,8 @@ dnstt is a DNS tunnel with these features:
    public key.
 
 It has these noteworthy limitations:
- * Requires intermediary resolvers to support large responses (about
-   1450 bytes, which is more than the mandated minimum of 512 bytes).
+ * Requires intermediary resolvers to support large responses (1232 bytes,
+   which is more than the mandated minimum of 512 bytes).
 
 dnstt is an application-layer tunnel that runs in userspace. It doesn't
 provide a TUN/TAP interface; it only hooks up a local TCP port with a
