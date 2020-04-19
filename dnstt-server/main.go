@@ -283,18 +283,6 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		resp.Flags |= 0x0400 // AA = 1
 	}
 
-	// We require clients to support EDNS(0) with a minimum payload size;
-	// otherwise we would have to set a small KCP MTU (only around 200
-	// bytes). https://tools.ietf.org/html/rfc6891#section-7 "If there is a
-	// problem with processing the OPT record itself, such as an option
-	// value that is badly formatted or that includes out-of-range values, a
-	// FORMERR MUST be returned."
-	if payloadSize < maxUDPPayload {
-		resp.Flags |= dns.RcodeFormatError
-		log.Printf("FORMERR: EDNS payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
-		return resp, clientID, nil
-	}
-
 	if resp.Flags&0x0400 == 0 { // AA
 		// Not a name we are authoritative for.
 		resp.Flags |= dns.RcodeNameError
@@ -328,6 +316,17 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if n < len(clientID) {
 		// Payload is not long enough to contain a ClientID.
 		resp.Flags |= dns.RcodeNameError
+		return resp, clientID, nil
+	}
+
+	// We require clients to support EDNS(0) with a minimum payload size;
+	// otherwise we would have to set a small KCP MTU (only around 200
+	// bytes). https://tools.ietf.org/html/rfc6891#section-7 "If there is a
+	// problem with processing the OPT record itself, such as an option
+	// value that is badly formatted or that includes out-of-range values, a
+	// FORMERR MUST be returned."
+	if payloadSize < maxUDPPayload {
+		resp.Flags |= dns.RcodeFormatError
 		return resp, clientID, nil
 	}
 
