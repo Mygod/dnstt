@@ -110,16 +110,21 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 		if err != nil {
 			log.Printf("stream %08x:%d copy stream←local: %v\n", conv, stream.ID(), err)
 		}
+		local.CloseRead()
 		stream.Close()
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(local, stream)
-		if err != nil {
+		if err == io.EOF {
+			// smux Stream.WriteTo may return io.EOF.
+			err = nil
+		}
+		if err != nil && err != io.ErrClosedPipe {
 			log.Printf("stream %08x:%d copy local←stream: %v\n", conv, stream.ID(), err)
 		}
-		local.Close()
+		local.CloseWrite()
 	}()
 	wg.Wait()
 

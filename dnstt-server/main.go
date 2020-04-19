@@ -83,16 +83,21 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 		if err != nil {
 			log.Printf("stream %08x:%d copy stream←upstream: %v\n", conv, stream.ID(), err)
 		}
+		conn.CloseRead()
 		stream.Close()
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(conn, stream)
-		if err != nil {
+		if err == io.EOF {
+			// smux Stream.WriteTo may return io.EOF.
+			err = nil
+		}
+		if err != nil && err != io.ErrClosedPipe {
 			log.Printf("stream %08x:%d copy upstream←stream: %v\n", conv, stream.ID(), err)
 		}
-		conn.Close()
+		conn.CloseWrite()
 	}()
 	wg.Wait()
 
