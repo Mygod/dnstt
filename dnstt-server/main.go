@@ -297,7 +297,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 
 	if question.Type != dns.RRTypeTXT {
 		// We only support QTYPE == TXT.
-		resp.Flags |= dns.RcodeNotImplemented
+		resp.Flags |= dns.RcodeNameError
 		return resp, clientID, nil
 	}
 
