@@ -347,25 +347,24 @@ func readMessage(r io.ReadSeeker) (Message, error) {
 		}
 	}
 
-	// Check for trailing bytes.
-	var buf [1]byte
-	_, err := io.ReadFull(r, buf[:])
-	if err == nil {
-		err = ErrTrailingBytes
-	}
-	if err != io.EOF {
-		return message, err
-	}
-
 	return message, nil
 }
 
 // MessageFromWireFormat parses a message from a buffer of bytes and returns a
 // Message object.
 func MessageFromWireFormat(buf []byte) (Message, error) {
-	message, err := readMessage(bytes.NewReader(buf))
+	r := bytes.NewReader(buf)
+	message, err := readMessage(r)
 	if err == io.EOF {
 		err = io.ErrUnexpectedEOF
+	} else if err == nil {
+		// Check for trailing bytes.
+		_, err = r.ReadByte()
+		if err == io.EOF {
+			err = nil
+		} else if err == nil {
+			err = ErrTrailingBytes
+		}
 	}
 	return message, err
 }
