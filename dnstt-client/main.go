@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base32"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -26,9 +25,6 @@ const (
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
 )
-
-// A base32 encoding without padding.
-var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 func chunks(p []byte, n int) [][]byte {
 	var result [][]byte

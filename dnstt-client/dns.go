@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base32"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -22,6 +23,9 @@ const (
 	// because the prefix codes indicating padding start at 224.
 	numPaddingForPoll = 8
 )
+
+// A base32 encoding without padding.
+var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 type DNSPacketConn struct {
 	clientID turbotunnel.ClientID
