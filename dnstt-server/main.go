@@ -255,6 +255,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			// RCODE=BADVERS."
 			resp.Flags |= dns.ExtendedRcodeBadVers & 0xf
 			additional.TTL = (dns.ExtendedRcodeBadVers >> 4) << 24
+			return resp, clientID, nil
 		}
 
 		payloadSize = int(rr.Class)
