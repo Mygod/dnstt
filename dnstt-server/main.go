@@ -386,7 +386,7 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 		// Got a UDP packet. Try to parse it as a DNS message.
 		query, err := dns.MessageFromWireFormat(buf[:n])
 		if err != nil {
-			log.Printf("%v: cannot parse DNS query: %v", addr, err)
+			log.Printf("cannot parse DNS query: %v", err)
 			continue
 		}
 
