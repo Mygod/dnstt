@@ -1,3 +1,32 @@
+// dnstt-server is the server end of a DNS tunnel.
+//
+// Usage:
+//     dnstt-server -gen-key [-privkey-file PRIVKEYFILE] [-pubkey-file PUBKEYFILE]
+//     dnstt-server -udp ADDR [-privkey PRIVKEY|-privkey-file PRIVKEYFILE] DOMAIN UPSTREAMADDR
+//
+// Example:
+//     dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
+//     dnstt-server -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+//
+// To generate a persistent server private key, first run with the -gen-key
+// option. By default the generated private and public keys are printed to
+// standard output. To save them to files instead, use the -privkey-file and
+// -pubkey-file options.
+//     dnstt-server -gen-key
+//     dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
+//
+// You can give the server's private key as a file or as a hex string.
+//     -privkey-file server.key
+//     -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+//
+// The -udp option controls the address that will listen for incoming DNS
+// queries.
+//
+// DOMAIN is the root of the DNS zone reserved for the tunnel. See README for
+// instructions on setting it up.
+//
+// UPSTREAMADDR is the TCP address to which incoming tunnelled streams will be
+// forwarded.
 package main
 
 import (
@@ -22,7 +51,10 @@ import (
 )
 
 const (
+	// smux streams will be closed after this much time without receiving data.
 	idleTimeout = 10 * time.Minute
+
+	// How to set the TTL field in Answer resource records.
 	responseTTL = 60
 
 	// We don't send UDP payloads larger than this, in an attempt to avoid
@@ -64,10 +96,96 @@ const (
 	maxResponseDelay = 1 * time.Second
 )
 
-// A base32 encoding without padding.
+// base32Encoding is a base32 encoding without padding.
 var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-// handleStream bidirectionally connects a client stream with the ORPort.
+// generateKeypair generates a private key and the corresponding public key. If
+// privkeyFilename and pubkeyFilename are respectively empty, it prints the
+// corresponding key to standard output; otherwise it saves the key to the given
+// file name. In case of any error, it attempts to delete any files it has
+// created before returning.
+func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
+	// Filenames to delete in case of error (avoid leaving partially written
+	// files).
+	var toDelete []string
+	defer func() {
+		for _, filename := range toDelete {
+			fmt.Fprintf(os.Stderr, "deleting partially written file %s\n", filename)
+			if closeErr := os.Remove(filename); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "cannot remove %s: %v\n", filename, closeErr)
+				if err == nil {
+					err = closeErr
+				}
+			}
+		}
+	}()
+
+	privkey, pubkey, err := noise.GenerateKeypair()
+	if err != nil {
+		return err
+	}
+
+	if privkeyFilename != "" {
+		// Save the privkey to a file.
+		f, err := os.Create(privkeyFilename)
+		if err != nil {
+			return err
+		}
+		toDelete = append(toDelete, privkeyFilename)
+		err = noise.WriteKey(f, privkey)
+		if err2 := f.Close(); err == nil {
+			err = err2
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if pubkeyFilename != "" {
+		// Save the pubkey to a file.
+		f, err := os.Create(pubkeyFilename)
+		if err != nil {
+			return err
+		}
+		toDelete = append(toDelete, pubkeyFilename)
+		err = noise.WriteKey(f, pubkey)
+		if err2 := f.Close(); err == nil {
+			err = err2
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	// All good, allow the written files to remain.
+	toDelete = nil
+
+	if privkeyFilename != "" {
+		fmt.Printf("privkey written to %s\n", privkeyFilename)
+	} else {
+		fmt.Printf("privkey %x\n", privkey)
+	}
+	if pubkeyFilename != "" {
+		fmt.Printf("pubkey  written to %s\n", pubkeyFilename)
+	} else {
+		fmt.Printf("pubkey  %x\n", pubkey)
+	}
+
+	return nil
+}
+
+// readKeyFromFile reads a key from a named file.
+func readKeyFromFile(filename string) ([]byte, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return noise.ReadKey(f)
+}
+
+// handleStream bidirectionally connects a client stream with a TCP socket
+// addressed by upstream.
 func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error {
 	conn, err := net.DialTCP("tcp", nil, upstream)
 	if err != nil {
@@ -104,8 +222,8 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 	return nil
 }
 
-// acceptStreams layers an smux.Session on a KCP connection and awaits streams
-// on it. It passes each stream to handleStream.
+// acceptStreams wraps a KCP session in a Noise channel and an smux.Session,
+// then awaits smux streams. It passes each stream to handleStream.
 func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.TCPAddr) error {
 	// Put a Noise channel on top of the KCP conn.
 	rw, err := noise.NewServer(conn, privkey, pubkey)
@@ -113,6 +231,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 		return err
 	}
 
+	// Put an smux session on top of the encrypted Noise channel.
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.Version = 2
 	smuxConfig.KeepAliveTimeout = idleTimeout
@@ -183,7 +302,16 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, upstream *net.TCPA
 	}
 }
 
+// nextPacket reads the next length-prefixed packet from r, ignoring padding. It
+// returns a nil error only when a packet was read successfully. It returns
+// io.EOF only when there were 0 bytes remaining to read from r. It returns
+// io.ErrUnexpectedEOF when EOF occurs in the middle of an encoded packet.
+//
+// The prefixing scheme is as follows. A length prefix L < 0xe0 means a data
+// packet of L bytes. A length prefix L >= 0xe0 means padding of L - 0xe0 bytes
+// (not counting the length of the length prefix itself).
 func nextPacket(r *bytes.Reader) ([]byte, error) {
+	// Convert io.EOF to io.ErrUnexpectedEOF.
 	eof := func(err error) error {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
@@ -194,6 +322,7 @@ func nextPacket(r *bytes.Reader) ([]byte, error) {
 	for {
 		prefix, err := r.ReadByte()
 		if err != nil {
+			// We may return a real io.EOF only here.
 			return nil, err
 		}
 		if prefix >= 224 {
@@ -202,14 +331,20 @@ func nextPacket(r *bytes.Reader) ([]byte, error) {
 			if err != nil {
 				return nil, eof(err)
 			}
-			continue
+		} else {
+			p := make([]byte, int(prefix))
+			_, err = io.ReadFull(r, p)
+			return p, eof(err)
 		}
-		p := make([]byte, int(prefix))
-		_, err = io.ReadFull(r, p)
-		return p, eof(err)
 	}
 }
 
+// responseFor constructs a response dns.Message that is appropriate for query.
+// Along with the dns.Message, it returns the ClientID extracted from the query
+// and its decoded data payload. If the returned dns.Message is nil, it means
+// that there should be no response to this query. If the returned dns.Message
+// has an Rcode() of dns.RcodeNoError, the message is a candidate for for
+// carrying downstream data in a TXT record.
 func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel.ClientID, []byte) {
 	var clientID turbotunnel.ClientID
 
@@ -344,30 +479,21 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	return resp, clientID, payload[len(clientID):]
 }
 
-// record represents a response set up with metadata appropriate for a response
-// to a previously received query. recvLoop sends instances of this type to
-// sendLoop via a channel. sendLoop may optionally fill in the response's Answer
-// section before sending it.
+// record represents a DNS message appropriate for a response to a previously
+// received query, along with metadata necessary for sending the response.
+// recvLoop sends instances of record to sendLoop via a channel. sendLoop
+// receives instances of record and may fill in the message's Answer section
+// before sending it.
 type record struct {
 	Resp     *dns.Message
 	Addr     net.Addr
 	ClientID turbotunnel.ClientID
 }
 
-func loop(dnsConn net.PacketConn, domain dns.Name, ttConn *turbotunnel.QueuePacketConn) error {
-	ch := make(chan *record, 100)
-	defer close(ch)
-
-	go func() {
-		err := sendLoop(dnsConn, ttConn, ch)
-		if err != nil {
-			log.Printf("sendLoop: %v", err)
-		}
-	}()
-
-	return recvLoop(domain, dnsConn, ttConn, ch)
-}
-
+// recvLoop repeatedly calls dnsConn.ReadFrom, extracts the packets contained in
+// the incoming DNS queries, and puts them on ttConn's incoming queue. Whenever
+// a query calls for a response, constructs a partial response and passes it to
+// sendLoop over ch.
 func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch chan<- *record) error {
 	for {
 		var buf [4096]byte
@@ -408,6 +534,10 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 	}
 }
 
+// sendLoop repeatedly receives records from ch. Those that represent an error
+// response, it sends on the network immediately. Those that represent a
+// response capable of carrying data, it packs full of as many packets as will
+// fit, then sends it.
 func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-chan *record) error {
 	var nextRec *record
 	var nextP []byte
@@ -450,6 +580,10 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			}
 			nextP = nil
 
+			// We loop and write as many packets from OutgoingQueue
+			// into the response as will fit. Any packet that would
+			// overflow the capacity of the DNS response, we save in
+			// nextP to be included in a future response.
 			timer := time.NewTimer(maxResponseDelay)
 		loop:
 			for {
@@ -503,6 +637,8 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			buf = buf[:maxUDPPayload]
 			buf[2] |= 0x02 // TC = 1
 		}
+
+		// Now we actually send the message as a UDP packet.
 		_, err = dnsConn.WriteTo(buf, rec.Addr)
 		if err != nil {
 			if err, ok := err.(net.Error); ok && err.Temporary() {
@@ -513,85 +649,6 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 		}
 	}
 	return nil
-}
-
-func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
-	// Filenames to delete in case of error (avoid leaving partially written
-	// files).
-	var toDelete []string
-	defer func() {
-		for _, filename := range toDelete {
-			fmt.Fprintf(os.Stderr, "deleting partially written file %s\n", filename)
-			if closeErr := os.Remove(filename); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "cannot remove %s: %v\n", filename, closeErr)
-				if err == nil {
-					err = closeErr
-				}
-			}
-		}
-	}()
-
-	privkey, pubkey, err := noise.GenerateKeypair()
-	if err != nil {
-		return err
-	}
-
-	if privkeyFilename != "" {
-		// Save the privkey to a file.
-		f, err := os.Create(privkeyFilename)
-		if err != nil {
-			return err
-		}
-		toDelete = append(toDelete, privkeyFilename)
-		err = noise.WriteKey(f, privkey)
-		if err2 := f.Close(); err == nil {
-			err = err2
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	if pubkeyFilename != "" {
-		// Save the pubkey to a file.
-		f, err := os.Create(pubkeyFilename)
-		if err != nil {
-			return err
-		}
-		toDelete = append(toDelete, pubkeyFilename)
-		err = noise.WriteKey(f, pubkey)
-		if err2 := f.Close(); err == nil {
-			err = err2
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	// All good, allow the written files to remain.
-	toDelete = nil
-
-	if privkeyFilename != "" {
-		fmt.Printf("privkey written to %s\n", privkeyFilename)
-	} else {
-		fmt.Printf("privkey %x\n", privkey)
-	}
-	if pubkeyFilename != "" {
-		fmt.Printf("pubkey  written to %s\n", pubkeyFilename)
-	} else {
-		fmt.Printf("pubkey  %x\n", pubkey)
-	}
-
-	return nil
-}
-
-func readKeyFromFile(filename string) ([]byte, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return noise.ReadKey(f)
 }
 
 func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net.PacketConn) error {
@@ -613,7 +670,17 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 
 	log.Printf("pubkey %x", pubkey)
 
-	return loop(dnsConn, domain, ttConn)
+	ch := make(chan *record, 100)
+	defer close(ch)
+
+	go func() {
+		err := sendLoop(dnsConn, ttConn, ch)
+		if err != nil {
+			log.Printf("sendLoop: %v", err)
+		}
+	}()
+
+	return recvLoop(domain, dnsConn, ttConn, ch)
 }
 
 func main() {

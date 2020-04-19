@@ -1,3 +1,28 @@
+// dnstt-client is the client end of a DNS tunnel.
+//
+// Usage:
+//     dnstt-client [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+//
+// Examples:
+//     dnstt-client -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+//     dnstt-client -dot resolver.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
+//
+// The program supports DNS over HTTPS (DoH), DNS over TLS (DoT), and UDP DNS.
+// Use one of these options:
+//     -doh https://resolver.example/dns-query
+//     -dot resolver.example:853
+//     -udp resolver.example:53
+//
+// You can give the server's public key as a file or as a hex string. Use
+// "dnstt-server -gen-key" to get the public key.
+//     -pubkey-file server.pub
+//     -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff
+//
+// DOMAIN is the root of the DNS zone reserved for the tunnel. See README for
+// instructions on setting it up.
+//
+// LOCALADDR is the TCP address that will listen for connections and forward
+// them over the tunnel.
 package main
 
 import (
@@ -17,12 +42,38 @@ import (
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
-const (
-	idleTimeout         = 10 * time.Minute
-	initPollDelay       = 500 * time.Millisecond
-	maxPollDelay        = 10 * time.Second
-	pollDelayMultiplier = 2.0
-)
+// smux streams will be closed after this much time without receiving data.
+const idleTimeout = 10 * time.Minute
+
+// dnsNameCapacity returns the number of bytes remaining for encoded data after
+// including domain in a DNS name.
+func dnsNameCapacity(domain dns.Name) int {
+	// Names must be 255 octets or shorter in total length.
+	// https://tools.ietf.org/html/rfc1035#section-2.3.4
+	capacity := 255
+	// Subtract the length of the null terminator.
+	capacity -= 1
+	for _, label := range domain {
+		// Subtract the length of the label and the length octet.
+		capacity -= len(label) + 1
+	}
+	// Each label may be up to 63 bytes long and requires 64 bytes to
+	// encode.
+	capacity = capacity * 63 / 64
+	// Base32 expands every 5 bytes to 8.
+	capacity = capacity * 5 / 8
+	return capacity
+}
+
+// readKeyFromFile reads a key from a named file.
+func readKeyFromFile(filename string) ([]byte, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return noise.ReadKey(f)
+}
 
 func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	stream, err := sess.OpenStream()
@@ -62,34 +113,6 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	wg.Wait()
 
 	return err
-}
-
-// dnsNameCapacity returns the number of bytes remaining for encoded data after
-// including domain in a DNS name.
-func dnsNameCapacity(domain dns.Name) int {
-	// https://tools.ietf.org/html/rfc1035#section-2.3.4
-	// Names must be 255 octets or shorter in total length.
-	capacity := 255
-	// Subtract the length of the null terminator.
-	capacity -= 1
-	for _, label := range domain {
-		// Subtract the length of the label and the length octet.
-		capacity -= len(label) + 1
-	}
-	// Each label may be up to 63 bytes long and requires 64
-	capacity = capacity * 63 / 64
-	// Base32 expands every 5 bytes to 8.
-	capacity = capacity * 5 / 8
-	return capacity
-}
-
-func readKeyFromFile(filename string) ([]byte, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return noise.ReadKey(f)
 }
 
 func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {

@@ -66,7 +66,7 @@ $ go build
 First you need to generate the server keypair that will be used to
 authenticate the server and encrypt the tunnel.
 ```
-$ ./dnstt-server -gen-key -privkey-file server.key
+$ ./dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
 privkey written to server.key
 pubkey  written to server.pub
 ```

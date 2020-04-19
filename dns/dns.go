@@ -52,11 +52,11 @@ const (
 	ClassIN = 1
 
 	// https://tools.ietf.org/html/rfc1035#section-4.1.1
-	RcodeNoError         = 0
-	RcodeFormatError     = 1
-	RcodeNameError       = 3 // a.k.a. NXDOMAIN
-	RcodeNotImplemented  = 4
-	ExtendedRcodeBadVers = 16
+	RcodeNoError         = 0  // a.k.a. NOERROR
+	RcodeFormatError     = 1  // a.k.a. FORMERR
+	RcodeNameError       = 3  // a.k.a. NXDOMAIN
+	RcodeNotImplemented  = 4  // a.k.a. NOTIMPL
+	ExtendedRcodeBadVers = 16 // a.k.a. BADVERS
 )
 
 // Name represents a domain name, a sequence of labels each of which is 63
@@ -83,7 +83,7 @@ func NewName(labels [][]byte) (Name, error) {
 	}
 	// Check the total length.
 	builder := newMessageBuilder()
-	builder.writeName(name)
+	builder.WriteName(name)
 	if len(builder.Bytes()) > 255 {
 		return nil, ErrNameTooLong
 	}
@@ -145,11 +145,15 @@ type Message struct {
 }
 
 // Opcode extracts the OPCODE part of the Flags field.
+//
+// https://tools.ietf.org/html/rfc1035#section-4.1.1
 func (msg *Message) Opcode() uint16 {
 	return (msg.Flags >> 11) & 0xf
 }
 
 // Rcode extracts the RCODE part of the Flags field.
+//
+// https://tools.ietf.org/html/rfc1035#section-4.1.1
 func (msg *Message) Rcode() uint16 {
 	return msg.Flags & 0x000f
 }
@@ -174,6 +178,8 @@ type RR struct {
 	Data  []byte
 }
 
+// readName parses a DNS name from r. It leaves r positioned just after the
+// parsed named.
 func readName(r io.ReadSeeker) (Name, error) {
 	var labels [][]byte
 	// We limit the number of compression pointers we are willing to follow.
@@ -250,10 +256,12 @@ loop:
 	return NewName(labels)
 }
 
+// readQuestion parses one entry from the Question section. It leaves r
+// positioned just after the parsed entry.
+//
+// https://tools.ietf.org/html/rfc1035#section-4.1.2
 func readQuestion(r io.ReadSeeker) (Question, error) {
 	var question Question
-
-	// https://tools.ietf.org/html/rfc1035#section-4.1.2
 	var err error
 	question.Name, err = readName(r)
 	if err != nil {
@@ -269,10 +277,12 @@ func readQuestion(r io.ReadSeeker) (Question, error) {
 	return question, nil
 }
 
+// readRR parses one resource record. It leaves r positioned just after the
+// parsed resource record.
+//
+// https://tools.ietf.org/html/rfc1035#section-4.1.3
 func readRR(r io.ReadSeeker) (RR, error) {
 	var rr RR
-
-	// https://tools.ietf.org/html/rfc1035#section-4.1.3
 	var err error
 	rr.Name, err = readName(r)
 	if err != nil {
@@ -302,6 +312,8 @@ func readRR(r io.ReadSeeker) (RR, error) {
 	return rr, nil
 }
 
+// readMessage parses a complete DNS message. It leaves r positioned just after
+// the parsed message.
 func readMessage(r io.ReadSeeker) (Message, error) {
 	var message Message
 
@@ -350,8 +362,9 @@ func readMessage(r io.ReadSeeker) (Message, error) {
 	return message, nil
 }
 
-// MessageFromWireFormat parses a message from a buffer of bytes and returns a
-// Message object.
+// MessageFromWireFormat parses a message from buf and returns a Message object.
+// It returns ErrTrailingBytes if there are bytes remaining in buf after parsing
+// is done.
 func MessageFromWireFormat(buf []byte) (Message, error) {
 	r := bytes.NewReader(buf)
 	message, err := readMessage(r)
@@ -369,22 +382,29 @@ func MessageFromWireFormat(buf []byte) (Message, error) {
 	return message, err
 }
 
+// messageBuilder manages the state of serializing a DNS message. Its main
+// function is to keep track of names already written for the purpose of name
+// compression.
 type messageBuilder struct {
 	w         bytes.Buffer
 	nameCache map[string]int
 }
 
+// newMessageBuilder creates a new messageBuilder with an empty name cache.
 func newMessageBuilder() *messageBuilder {
 	return &messageBuilder{
 		nameCache: make(map[string]int),
 	}
 }
 
+// Bytes returns the serialized DNS message as a slice of bytes.
 func (builder *messageBuilder) Bytes() []byte {
 	return builder.w.Bytes()
 }
 
-func (builder *messageBuilder) writeName(name Name) {
+// WriteName appends name to the in-progress messageBuilder, employing
+// compression pointers to previously written names if possible.
+func (builder *messageBuilder) WriteName(name Name) {
 	// https://tools.ietf.org/html/rfc1035#section-3.1
 	for i := range name {
 		// Has this suffix already been encoded in the message?
@@ -406,17 +426,20 @@ func (builder *messageBuilder) writeName(name Name) {
 	builder.w.WriteByte(0)
 }
 
-func (builder *messageBuilder) writeQuestion(question *Question) error {
+// WriteQuestion appends a Question section entry to the in-progress
+// messageBuilder.
+func (builder *messageBuilder) WriteQuestion(question *Question) {
 	// https://tools.ietf.org/html/rfc1035#section-4.1.2
-	builder.writeName(question.Name)
+	builder.WriteName(question.Name)
 	binary.Write(&builder.w, binary.BigEndian, question.Type)
 	binary.Write(&builder.w, binary.BigEndian, question.Class)
-	return nil
 }
 
-func (builder *messageBuilder) writeRR(rr *RR) error {
+// WriteRR appends a resource record to the in-progress messageBuilder. It
+// returns ErrIntegerOverflow if the length of rr.Data does not fit in 16 bits.
+func (builder *messageBuilder) WriteRR(rr *RR) error {
 	// https://tools.ietf.org/html/rfc1035#section-4.1.3
-	builder.writeName(rr.Name)
+	builder.WriteName(rr.Name)
 	binary.Write(&builder.w, binary.BigEndian, rr.Type)
 	binary.Write(&builder.w, binary.BigEndian, rr.Class)
 	binary.Write(&builder.w, binary.BigEndian, rr.TTL)
@@ -429,7 +452,11 @@ func (builder *messageBuilder) writeRR(rr *RR) error {
 	return nil
 }
 
-func (builder *messageBuilder) writeMessage(message *Message) error {
+// WriteMessage appends a complete DNS message to the in-progress
+// messageBuilder. It returns ErrIntegerOverflow if the number of entries in any
+// section, or the length of the data in any resource record, does not fit in 16
+// bits.
+func (builder *messageBuilder) WriteMessage(message *Message) error {
 	// Header section
 	// https://tools.ietf.org/html/rfc1035#section-4.1.1
 	binary.Write(&builder.w, binary.BigEndian, message.ID)
@@ -450,17 +477,14 @@ func (builder *messageBuilder) writeMessage(message *Message) error {
 	// Question section
 	// https://tools.ietf.org/html/rfc1035#section-4.1.2
 	for _, question := range message.Question {
-		err := builder.writeQuestion(&question)
-		if err != nil {
-			return err
-		}
+		builder.WriteQuestion(&question)
 	}
 
 	// Answer, Authority, and Additional sections
 	// https://tools.ietf.org/html/rfc1035#section-4.1.3
 	for _, rrs := range [][]RR{message.Answer, message.Authority, message.Additional} {
 		for _, rr := range rrs {
-			err := builder.writeRR(&rr)
+			err := builder.WriteRR(&rr)
 			if err != nil {
 				return err
 			}
@@ -470,10 +494,12 @@ func (builder *messageBuilder) writeMessage(message *Message) error {
 	return nil
 }
 
-// WireFormat encodes a Message as a slice of bytes in wire format.
+// WireFormat encodes a Message as a slice of bytes in DNS wire format. It
+// returns ErrIntegerOverflow if the number of entries in any section, or the
+// length of the data in any resource record, does not fit in 16 bits.
 func (message *Message) WireFormat() ([]byte, error) {
 	builder := newMessageBuilder()
-	err := builder.writeMessage(message)
+	err := builder.WriteMessage(message)
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +509,8 @@ func (message *Message) WireFormat() ([]byte, error) {
 // DecodeRDataTXT decodes TXT-DATA (as found in the RDATA for a resource record
 // with TYPE=TXT) as a raw byte slice, by concatenating all the
 // <character-string>s it contains.
+//
+// https://tools.ietf.org/html/rfc1035#section-3.3.14
 func DecodeRDataTXT(p []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	for {
@@ -504,8 +532,10 @@ func DecodeRDataTXT(p []byte) ([]byte, error) {
 }
 
 // EncodeRDataTXT encodes a slice of bytes as TXT-DATA, as appropriate for the
-// RDATA of a resource record with TYPE=TXT. There is no length restriction;
-// that must be checked at a higher level.
+// RDATA of a resource record with TYPE=TXT. No length restriction is enforced
+// here; that must be checked at a higher level.
+//
+// https://tools.ietf.org/html/rfc1035#section-3.3.14
 func EncodeRDataTXT(p []byte) []byte {
 	// https://tools.ietf.org/html/rfc1035#section-3.3
 	// https://tools.ietf.org/html/rfc1035#section-3.3.14

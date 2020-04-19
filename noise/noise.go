@@ -1,3 +1,8 @@
+// Package noise provides a net.Conn-like interface for a
+// Noise_NK_25519_ChaChaPoly_BLAKE2s. It encodes Noise messages onto a reliable
+// stream using 16-bit length prefixes.
+//
+// https://noiseprotocol.org/noise.html
 package noise
 
 import (
@@ -17,6 +22,13 @@ import (
 // The length of public and private keys as returned by GenerateKeypair.
 const KeyLen = 32
 
+// cipherSuite represents 25519_ChaChaPoly_BLAKE2s.
+var cipherSuite = noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashBLAKE2s)
+
+// readMessage reads a length-prefixed message from r. It returns a nil error
+// only when a complete message was read. It returns io.EOF only when there were
+// 0 bytes remaining to read from r. It returns io.ErrUnexpectedEOF when EOF
+// occurs in the middle of an encoded message.
 func readMessage(r io.Reader) ([]byte, error) {
 	var length uint16
 	err := binary.Read(r, binary.BigEndian, &length)
@@ -33,6 +45,8 @@ func readMessage(r io.Reader) ([]byte, error) {
 	return msg, err
 }
 
+// writeMessage writes msg as a length-prefixed message to w. It panics if the
+// length of msg cannot be represented in 16 bits.
 func writeMessage(w io.Writer, msg []byte) error {
 	length := uint16(len(msg))
 	if int(length) != len(msg) {
@@ -46,20 +60,24 @@ func writeMessage(w io.Writer, msg []byte) error {
 	return err
 }
 
-type ReadWriter struct {
-	rw         io.ReadWriteCloser
+// socket is the internal type that represents a Noise-wrapped
+// io.ReadWriteCloser.
+type socket struct {
 	recvPipe   *io.PipeReader
 	sendCipher *noise.CipherState
+	io.ReadWriteCloser
 }
 
-func newReadWriter(rw io.ReadWriteCloser, recvCipher, sendCipher *noise.CipherState) *ReadWriter {
+func newSocket(rwc io.ReadWriteCloser, recvCipher, sendCipher *noise.CipherState) *socket {
 	pr, pw := io.Pipe()
+	// This loop calls readMessage, decrypts the messages, and feeds them
+	// into recvPipe where they will be returned from Read.
 	go func() (err error) {
 		defer func() {
 			pw.CloseWithError(err)
 		}()
 		for {
-			msg, err := readMessage(rw)
+			msg, err := readMessage(rwc)
 			if err != nil {
 				return err
 			}
@@ -73,25 +91,27 @@ func newReadWriter(rw io.ReadWriteCloser, recvCipher, sendCipher *noise.CipherSt
 			}
 		}
 	}()
-	return &ReadWriter{
-		rw:         rw,
-		sendCipher: sendCipher,
-		recvPipe:   pr,
+	return &socket{
+		sendCipher:      sendCipher,
+		recvPipe:        pr,
+		ReadWriteCloser: rwc,
 	}
 }
 
-func (rw *ReadWriter) Read(p []byte) (int, error) {
-	return rw.recvPipe.Read(p)
+// Read reads decrypted data from the wrapped io.Reader.
+func (s *socket) Read(p []byte) (int, error) {
+	return s.recvPipe.Read(p)
 }
 
-func (rw *ReadWriter) Write(p []byte) (int, error) {
+// Write writes encrypted data from the wrapped io.Writer.
+func (s *socket) Write(p []byte) (int, error) {
 	total := 0
 	for len(p) > 0 {
 		n := len(p)
 		if n > 4096 {
 			n = 4096
 		}
-		err := writeMessage(rw.rw, rw.sendCipher.Encrypt(nil, nil, p[:n]))
+		err := writeMessage(s.ReadWriteCloser, s.sendCipher.Encrypt(nil, nil, p[:n]))
 		if err != nil {
 			return total, err
 		}
@@ -101,12 +121,8 @@ func (rw *ReadWriter) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-func (rw *ReadWriter) Close() error {
-	return rw.rw.Close()
-}
-
-var cipherSuite = noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashBLAKE2s)
-
+// newConfig instantiates configuration settings that are common to clients and
+// servers.
 func newConfig(initiator bool) noise.Config {
 	return noise.Config{
 		CipherSuite: cipherSuite,
@@ -116,7 +132,10 @@ func newConfig(initiator bool) noise.Config {
 	}
 }
 
-func NewClient(rw io.ReadWriteCloser, serverPubkey []byte) (*ReadWriter, error) {
+// NewClient wraps an io.ReadWriteCloser in a Noise protocol as a client, and
+// returns after completing the handshake. It returns a non-nil error if there
+// is an error during the handshake.
+func NewClient(rwc io.ReadWriteCloser, serverPubkey []byte) (io.ReadWriteCloser, error) {
 	config := newConfig(true)
 	config.PeerStatic = serverPubkey
 	handshakeState, err := noise.NewHandshakeState(config)
@@ -129,13 +148,13 @@ func NewClient(rw io.ReadWriteCloser, serverPubkey []byte) (*ReadWriter, error) 
 	if err != nil {
 		return nil, err
 	}
-	err = writeMessage(rw, msg)
+	err = writeMessage(rwc, msg)
 	if err != nil {
 		return nil, err
 	}
 
 	// <- e, es
-	msg, err = readMessage(rw)
+	msg, err = readMessage(rwc)
 	if err != nil {
 		return nil, err
 	}
@@ -147,10 +166,13 @@ func NewClient(rw io.ReadWriteCloser, serverPubkey []byte) (*ReadWriter, error) 
 		return nil, errors.New("unexpected server payload")
 	}
 
-	return newReadWriter(rw, recvCipher, sendCipher), nil
+	return newSocket(rwc, recvCipher, sendCipher), nil
 }
 
-func NewServer(rw io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (*ReadWriter, error) {
+// NewClient wraps an io.ReadWriteCloser in a Noise protocol as a server, and
+// returns after completing the handshake. It returns a non-nil error if there
+// is an error during the handshake.
+func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.ReadWriteCloser, error) {
 	config := newConfig(false)
 	config.StaticKeypair = noise.DHKey{Private: serverPrivkey, Public: serverPubkey}
 	handshakeState, err := noise.NewHandshakeState(config)
@@ -159,7 +181,7 @@ func NewServer(rw io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (*Read
 	}
 
 	// -> e, es
-	msg, err := readMessage(rw)
+	msg, err := readMessage(rwc)
 	if err != nil {
 		return nil, err
 	}
@@ -176,14 +198,17 @@ func NewServer(rw io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (*Read
 	if err != nil {
 		return nil, err
 	}
-	err = writeMessage(rw, msg)
+	err = writeMessage(rwc, msg)
 	if err != nil {
 		return nil, err
 	}
 
-	return newReadWriter(rw, recvCipher, sendCipher), nil
+	return newSocket(rwc, recvCipher, sendCipher), nil
 }
 
+// GenerateKeypair generates a private key and the corresponding public key.
+//
+// https://noiseprotocol.org/noise.html#dh-functions
 func GenerateKeypair() (privkey, pubkey []byte, err error) {
 	pair, err := noise.DH25519.GenerateKeypair(rand.Reader)
 	if err != nil {
@@ -200,6 +225,7 @@ func GenerateKeypair() (privkey, pubkey []byte, err error) {
 	return pair.Private, pair.Public, nil
 }
 
+// PubkeyFromPrivkey returns the public key that corresponds to privkey.
 func PubkeyFromPrivkey(privkey []byte) []byte {
 	pair, err := noise.DH25519.GenerateKeypair(bytes.NewReader(privkey))
 	if err != nil {
