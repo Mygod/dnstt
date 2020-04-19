@@ -219,3 +219,24 @@ KCP
 DNS messages
 DoH / DoT / UDP DNS
 ```
+
+When you run `dnstt-server -gen-key`, you can save the private and
+public keys to a file using the `-privkey-file` and `-pubkey-file`
+options. You can then load the keys later using `-privkey-file` on the
+server and `-pubkey-file` on the client. Alternatively, you can deal
+with the keys as literal hexadecimal strings rather than files. If you
+run `dnstt-server -gen-key` without the `-privkey-file` and
+`-pubkey-file` options, it will display the keys rather than save them
+to files. You can then use the keys with `-privkey` on the server and
+`-pubkey` on the client.
+```
+$ ./dnstt-server -gen-key
+privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+pubkey  0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff
+$ ./dnstt-server -udp 127.0.0.1:5300 -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef t.example.com 127.0.0.1:8000
+$ ./dnstt-client -dot dot.example:853 -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff t.example.com 127.0.0.1:7000
+```
+If you run the server without `-privkey-file` or `-privkey`, it will
+generate a temporary keypair and print the public key in the log. But
+the key will be different the next time you restart the server, and you
+will have to reconfigure clients.
