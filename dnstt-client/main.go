@@ -25,8 +25,6 @@ const (
 	initPollDelay       = 500 * time.Millisecond
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
-	// How many bytes of random padding to insert into queries.
-	numPadding = 3
 )
 
 // A base32 encoding without padding.

@@ -14,6 +14,15 @@ import (
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
+const (
+	// How many bytes of random padding to insert into queries.
+	numPadding = 3
+	// In an otherwise empty polling query, insert even more random padding,
+	// to reduce the chance of a cache hit. Cannot be greater than 31,
+	// because the prefix codes indicating padding start at 224.
+	numPaddingForPoll = 8
+)
+
 type DNSPacketConn struct {
 	clientID turbotunnel.ClientID
 	domain   dns.Name
@@ -100,9 +109,13 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 		var buf bytes.Buffer
 		// ClientID
 		buf.Write(c.clientID[:])
+		n := numPadding
+		if len(p) == 0 {
+			n = numPaddingForPoll
+		}
 		// Padding / cache inhibition
-		buf.WriteByte(224 + numPadding)
-		io.CopyN(&buf, rand.Reader, numPadding)
+		buf.WriteByte(byte(224 + n))
+		io.CopyN(&buf, rand.Reader, int64(n))
 		// Packet contents
 		if len(p) > 0 {
 			buf.WriteByte(byte(len(p)))
