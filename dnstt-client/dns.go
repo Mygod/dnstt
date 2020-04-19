@@ -126,6 +126,7 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 
 	encoded := make([]byte, base32Encoding.EncodedLen(len(decoded)))
 	base32Encoding.Encode(encoded, decoded)
+	encoded = bytes.ToLower(encoded)
 	labels := chunks(encoded, 63)
 	labels = append(labels, c.domain...)
 	name, err := dns.NewName(labels)
