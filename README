@@ -177,7 +177,10 @@ resolver, but cannot see where the resolver is forwarding its queries.
 An observer can probably infer, based on volume and other traffic
 characteristics, that a tunnel is being used, though it cannot tell
 where the remote end of the tunnel is, nor what the contents of the
-tunnel are. 
+tunnel are. If the tunnel client is not using DoH or DoT but instead UDP
+(`-udp` option), then even an observer between the tunnel client and the
+resolver can see that a tunnel is being used and where the remote end of
+the tunnel is.
 
 An observer between the resolver and the tunnel server (this includes
 the resolver itself) can easily tell that a tunnel is being used and
@@ -186,10 +189,10 @@ encryption at that point. This kind of observer still cannot read the
 contents of the tunnel, because there is an additional layer of
 end-to-end encryption between the tunnel client and the tunnel server.
 
-If the tunnel client is not using DoH or DoT but instead UDP (`-udp`
-option), then even an observer between the tunnel client and the
-resolver can see that a tunnel is being used and where the remote end of
-the tunnel is.
+An observer who watches what leaves the tunnel server will be able to
+see anything that the tunnel server forwards to some other host (if the
+tunnel server is acting as a proxy, for example), unless that data has
+been separately encrypted before being sent through the tunnel.
 
 
 ## Encryption and authentication
