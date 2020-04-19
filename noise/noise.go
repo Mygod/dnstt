@@ -21,14 +21,16 @@ func readMessage(r io.Reader) ([]byte, error) {
 	var length uint16
 	err := binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
+		// We may return a real io.EOF only here.
 		return nil, err
 	}
 	msg := make([]byte, int(length))
 	_, err = io.ReadFull(r, msg)
-	if err != nil {
-		return nil, nil
+	// Here we must change io.EOF to io.ErrUnexpectedEOF.
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
 	}
-	return msg, nil
+	return msg, err
 }
 
 func writeMessage(w io.Writer, msg []byte) error {
