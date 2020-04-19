@@ -259,12 +259,11 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		}
 
 		payloadSize = int(rr.Class)
-		if payloadSize < 512 {
-			// https://tools.ietf.org/html/rfc6891#section-6.1.1
-			// "Values lower than 512 MUST be treated as equal to
-			// 512."
-			payloadSize = 512
-		}
+	}
+	if payloadSize < 512 {
+		// https://tools.ietf.org/html/rfc6891#section-6.1.1 "Values
+		// lower than 512 MUST be treated as equal to 512."
+		payloadSize = 512
 	}
 	// We will return RcodeFormatError if payloadSize is too small, but
 	// first, check the name in order to set the AA bit properly.
