@@ -236,6 +236,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			// "If a query message with more than one OPT RR is
 			// received, a FORMERR (RCODE=1) MUST be returned."
 			resp.Flags |= dns.RcodeFormatError
+			log.Printf("FORMERR: more than one OPT RR")
 			return resp, clientID, nil
 		}
 		resp.Additional = append(resp.Additional, dns.RR{
@@ -255,6 +256,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			// RCODE=BADVERS."
 			resp.Flags |= dns.ExtendedRcodeBadVers & 0xf
 			additional.TTL = (dns.ExtendedRcodeBadVers >> 4) << 24
+			log.Printf("BADVERS: EDNS version %d != 0", version)
 			return resp, clientID, nil
 		}
 
@@ -271,6 +273,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	// There must be exactly one question.
 	if len(query.Question) != 1 {
 		resp.Flags |= dns.RcodeFormatError
+		log.Printf("FORMERR: too many questions (%d)", len(query.Question))
 		return resp, clientID, nil
 	}
 	question := query.Question[0]
@@ -286,18 +289,21 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if resp.Flags&0x0400 == 0 { // AA
 		// Not a name we are authoritative for.
 		resp.Flags |= dns.RcodeNameError
+		log.Printf("NXDOMAIN: not authoritative for %s", question.Name)
 		return resp, clientID, nil
 	}
 
 	if query.Flags&0x7800 != 0 {
 		// We don't support OPCODE != QUERY.
 		resp.Flags |= dns.RcodeNotImplemented
+		log.Printf("NOTIMPL: unrecognized OPCODE %d", (query.Flags>>11)&0xf)
 		return resp, clientID, nil
 	}
 
 	if question.Type != dns.RRTypeTXT {
 		// We only support QTYPE == TXT.
 		resp.Flags |= dns.RcodeNameError
+		log.Printf("NXDOMAIN: QTYPE %d != TXT", question.Type)
 		return resp, clientID, nil
 	}
 
@@ -307,6 +313,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if err != nil {
 		// Base32 error, make like the name doesn't exist.
 		resp.Flags |= dns.RcodeNameError
+		log.Printf("NXDOMAIN: base32 decoding: %v", err)
 		return resp, clientID, nil
 	}
 	payload = payload[:n]
@@ -316,6 +323,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if n < len(clientID) {
 		// Payload is not long enough to contain a ClientID.
 		resp.Flags |= dns.RcodeNameError
+		log.Printf("NXDOMAIN: %d bytes are too short to contain a ClientID", n)
 		return resp, clientID, nil
 	}
 
@@ -327,6 +335,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	// FORMERR MUST be returned."
 	if payloadSize < maxUDPPayload {
 		resp.Flags |= dns.RcodeFormatError
+		log.Printf("FORMERR: requestor payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
 		return resp, clientID, nil
 	}
 
@@ -372,7 +381,7 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 		// Got a UDP packet. Try to parse it as a DNS message.
 		query, err := dns.MessageFromWireFormat(buf[:n])
 		if err != nil {
-			log.Printf("%v: parsing DNS query: %v", addr, err)
+			log.Printf("%v: cannot parse DNS query: %v", addr, err)
 			continue
 		}
 
