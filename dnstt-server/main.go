@@ -292,10 +292,11 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	// FORMERR MUST be returned."
 	if payloadSize < maxUDPPayload {
 		resp.Flags |= dns.RcodeFormatError
+		log.Printf("FORMERR: EDNS payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
 		return resp, clientID, nil
 	}
 
-	if resp.Flags|0x0400 == 0 { // AA
+	if resp.Flags&0x0400 == 0 { // AA
 		// Not a name we are authoritative for.
 		resp.Flags |= dns.RcodeNameError
 		return resp, clientID, nil
