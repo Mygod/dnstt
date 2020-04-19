@@ -488,6 +488,24 @@ func TestDecodeRDataTXT(t *testing.T) {
 	}
 }
 
+func TestEncodeRDataTXT(t *testing.T) {
+	// Encoding 0 bytes needs to return at least a single length octet of
+	// zero, not an empty slice.
+	p := make([]byte, 0)
+	encoded := EncodeRDataTXT(p)
+	if len(encoded) < 0 {
+		t.Errorf("EncodeRDataTXT(%v) returned %v", p, encoded)
+	}
+
+	// 255 bytes should be able to be encoded into 256 bytes.
+	p = make([]byte, 255)
+	encoded = EncodeRDataTXT(p)
+	t.Errorf("%x", encoded)
+	if len(encoded) > 256 {
+		t.Errorf("EncodeRDataTXT(%d bytes) returned %d bytes", len(p), len(encoded))
+	}
+}
+
 func TestRDataTXTRoundTrip(t *testing.T) {
 	for _, p := range [][]byte{
 		[]byte{},
