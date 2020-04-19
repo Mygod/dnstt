@@ -287,16 +287,13 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	// return RcodeNameError below, but prefer to return RcodeFormatError
 	// for payload size if that applies as well.
 	prefix, ok := question.Name.TrimSuffix(domain)
-	if ok {
-		resp.Flags |= 0x0400 // AA = 1
-	}
-
-	if resp.Flags&0x0400 == 0 { // AA
+	if !ok {
 		// Not a name we are authoritative for.
 		resp.Flags |= dns.RcodeNameError
 		log.Printf("NXDOMAIN: not authoritative for %s", question.Name)
 		return resp, clientID, nil
 	}
+	resp.Flags |= 0x0400 // AA = 1
 
 	if query.Flags&0x7800 != 0 {
 		// We don't support OPCODE != QUERY.
