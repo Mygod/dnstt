@@ -72,22 +72,24 @@ pubkey  written to server.pub
 ```
 
 Run the server. You need to provide an address that will listen for UDP
-DNS packets (`127.0.0.1:5300`), the private key file (`server.key`), the
-root of the DNS zone (`t.example.com`), and a TCP address to which
-incoming tunnel stream will be forwarded (`127.0.0.1:8000`).
-
+DNS packets (`:5300`), the private key file (`server.key`), the root of
+the DNS zone (`t.example.com`), and a TCP address to which incoming
+tunnel stream will be forwarded (`127.0.0.1:8000`).
 ```
-$ ./dnstt-server -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
 The tunnel server needs to be able to receive packets on an external
 port 53. You can have it listen on port 53 directly using `-udp :53`,
 but that requires the program to run as root. It is better to run the
-program as an ordinary user and have it listen on a non-local port
-(`127.0.0.1:5300` above), and port-forward port 53 to it. On Linux, use
-this command to forward external port 53 to localhost port 5300:
+program as an ordinary user and have it listen on an unprivileged port
+(`:5300` above), and port-forward port 53 to it. On Linux, use this
+command to forward external port 53 to localhost port 5300:
 ```
-# iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to :5300
+# iptables -I INPUT -p udp --dport 5300 -j ACCEPT
+# iptables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
+# ip6tables -I INPUT -p udp --dport 5300 -j ACCEPT
+# ip6tables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
 ```
 
 You need to also run something for the tunnel server to connect to. It
@@ -150,7 +152,7 @@ server and connecting the server end of the tunnel to it. For example,
 Ncat has a built-in simple HTTP server:
 ```
 $ ncat -lkv --proxy-type http 127.0.0.1 8000
-$ ./dnstt-server -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
 On the client, have the tunnel client listen on 127.0.0.1:7000, and configure
@@ -236,7 +238,7 @@ to files. You can then use the keys with `-privkey` on the server and
 $ ./dnstt-server -gen-key
 privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 pubkey  0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff
-$ ./dnstt-server -udp 127.0.0.1:5300 -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef t.example.com 127.0.0.1:8000
+$ ./dnstt-server -udp :5300 -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef t.example.com 127.0.0.1:8000
 $ ./dnstt-client -dot dot.example:853 -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff t.example.com 127.0.0.1:7000
 ```
 If you run the server without `-privkey-file` or `-privkey`, it will
