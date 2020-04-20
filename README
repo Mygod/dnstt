@@ -91,7 +91,7 @@ this command to forward external port 53 to localhost port 5300:
 ```
 
 You need to also run something for the tunnel server to connect to. It
-can be a proxy server or anything else. For testing, you can use a
+can be a proxy server or anything else. For testing, you can use an
 Ncat listener:
 ```
 $ ncat -lkv 127.0.0.1 8000
