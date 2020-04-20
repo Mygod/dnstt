@@ -87,7 +87,7 @@ program as an ordinary user and have it listen on a non-local port
 (`127.0.0.1:5300` above), and port-forward port 53 to it. On Linux, use
 this command to forward external port 53 to localhost port 5300:
 ```
-# iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to :5353
+# iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to :5300
 ```
 
 You need to also run something for the tunnel server to connect to. It
