@@ -87,7 +87,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	log.Printf("begin stream %08x:%d", conv, stream.ID())
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(stream, local)
@@ -97,7 +97,6 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 		local.CloseRead()
 		stream.Close()
 	}()
-	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(local, stream)

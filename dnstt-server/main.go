@@ -195,7 +195,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 	defer conn.Close()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(stream, conn)
@@ -205,7 +205,6 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 		conn.CloseRead()
 		stream.Close()
 	}()
-	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(conn, stream)
