@@ -91,6 +91,10 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	go func() {
 		defer wg.Done()
 		_, err := io.Copy(stream, local)
+		if err == io.EOF {
+			// smux Stream.Write may return io.EOF.
+			err = nil
+		}
 		if err != nil {
 			log.Printf("stream %08x:%d copy stream←local: %v\n", conv, stream.ID(), err)
 		}
