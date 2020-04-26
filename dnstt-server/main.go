@@ -70,21 +70,6 @@ const (
 	// of 1232. Cloudflare's was 1452, and Google's was 4096.
 	maxUDPPayload = 1280 - 40 - 8
 
-	// We may have a variable amount of room in which to encode downstream
-	// packets in each response, because we must echo the query's Question
-	// section, which is of variable length. But we cannot give dynamic
-	// packet size limits to KCP; the best we can do is set a global maximum
-	// which no packet will exceed. We choose that maximum to keep the UDP
-	// payload size under maxUDPPayload, even in the worst case of a
-	// maximum-length name in the Question section. The precise limit is
-	// 934 = (maxUDPPayload - 294) * 255/256, where 294 is the size of a
-	// DNS message containing a Question section with a name that is 255
-	// bytes long, an Answer section with a single TXT RR whose name is a
-	// compressed pointer to the name in the Question section and no data,
-	// and an Additional section with an OPT RR for EDNS(0); and 255/256
-	// reflects the overhead of encoding data into a TXT RR.
-	maxEncodedPayload = 930
-
 	// How long we may wait for downstream data before sending an empty
 	// response. If another query comes in while we are waiting, we'll send
 	// an empty response anyway and restart the delay timer for the next
@@ -264,7 +249,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 
 // acceptSessions listens for incoming KCP connections and passes them to
 // acceptStreams.
-func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, upstream *net.TCPAddr) error {
+func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream *net.TCPAddr) error {
 	for {
 		conn, err := ln.AcceptKCP()
 		if err != nil {
@@ -284,9 +269,7 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, upstream *net.TCPA
 			0, // default resend
 			1, // nc=1 => congestion window off
 		)
-		// Set the maximum transmission unit. 2 bytes accounts for a
-		// packet length prefix.
-		if rc := conn.SetMtu(maxEncodedPayload - 2); !rc {
+		if rc := conn.SetMtu(mtu); !rc {
 			panic(rc)
 		}
 		go func() {
@@ -540,8 +523,8 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 // sendLoop repeatedly receives records from ch. Those that represent an error
 // response, it sends on the network immediately. Those that represent a
 // response capable of carrying data, it packs full of as many packets as will
-// fit, then sends it.
-func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-chan *record) error {
+// fit while keeping the total size under maxEncodedPayload, then sends it.
+func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-chan *record, maxEncodedPayload int) error {
 	var nextRec *record
 	var nextP []byte
 	for {
@@ -560,6 +543,8 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			// If it's a non-error response, we can fill the Answer
 			// section with downstream packets.
 
+			// Any changes to how responses are built need to happen
+			// also in computeMaxEncodedPayload.
 			rec.Resp.Answer = []dns.RR{
 				{
 					Name:  rec.Resp.Question[0].Name,
@@ -654,8 +639,106 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 	return nil
 }
 
+// computeMaxEncodedPayload computes the maximum amount of downstream TXT RR
+// data that keep the overall response size less than maxUDPPayload, in the
+// worst case when the response answers a query that has a maximum-length name
+// in its Question section. Returns 0 in the case that no amount of data makes
+// the overall response size small enough.
+//
+// This function needs to be kept in sync with sendLoop with regard to how it
+// builds candidate responses.
+func computeMaxEncodedPayload(limit int) int {
+	// 64+64+64+62 octets, needs to be base32-decodable.
+	maxLengthName, err := dns.NewName([][]byte{
+		[]byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+		[]byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+		[]byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+		[]byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+	})
+	if err != nil {
+		panic(err)
+	}
+	if len(maxLengthName.String())+2 != 255 {
+		panic(fmt.Sprintf("max-length name is %d octets, should be %d %s",
+			len(maxLengthName.String())+2, 255, maxLengthName))
+	}
+
+	queryLimit := uint16(limit)
+	if int(queryLimit) != limit {
+		queryLimit = 0xffff
+	}
+	query := &dns.Message{
+		Question: []dns.Question{
+			{
+				Name:  maxLengthName,
+				Type:  dns.RRTypeTXT,
+				Class: dns.RRTypeTXT,
+			},
+		},
+		// EDNS(0)
+		Additional: []dns.RR{
+			{
+				Name:  dns.Name{},
+				Type:  dns.RRTypeOPT,
+				Class: queryLimit, // requestor's UDP payload size
+				TTL:   0,          // extended RCODE and flags
+				Data:  []byte{},
+			},
+		},
+	}
+	resp, _ := responseFor(query, dns.Name([][]byte{}))
+	// As in sendLoop.
+	resp.Answer = []dns.RR{
+		{
+			Name:  query.Question[0].Name,
+			Type:  query.Question[0].Type,
+			Class: query.Question[0].Class,
+			TTL:   responseTTL,
+			Data:  nil, // will be filled in below
+		},
+	}
+
+	// Binary search to find the maximum payload length that does not result
+	// in a wire-format message whose length exceeds the limit.
+	low := 0
+	high := 32768
+	for low+1 < high {
+		mid := (low + high) / 2
+		resp.Answer[0].Data = dns.EncodeRDataTXT(make([]byte, mid))
+		buf, err := resp.WireFormat()
+		if err != nil {
+			panic(err)
+		}
+		if len(buf) <= limit {
+			low = mid
+		} else {
+			high = mid
+		}
+	}
+
+	return low
+}
+
 func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net.PacketConn) error {
 	defer dnsConn.Close()
+
+	// We have a variable amount of room in which to encode downstream
+	// packets in each response, because each response must contain the
+	// query's Question section, which is of variable length. But we cannot
+	// give dynamic packet size limits to KCP; the best we can do is set a
+	// global maximum which no packet will exceed. We choose that maximum to
+	// keep the UDP payload size under maxUDPPayload, even in the worst case
+	// of a maximum-length name in the query's Question section.
+	maxEncodedPayload := computeMaxEncodedPayload(maxUDPPayload)
+	// 2 bytes accounts for a packet length prefix.
+	mtu := maxEncodedPayload - 2
+	if mtu < 80 {
+		if mtu < 0 {
+			mtu = 0
+		}
+		return fmt.Errorf("maximum UDP payload size of %d leaves only %d bytes for payload", maxUDPPayload, mtu)
+	}
+	log.Printf("MTU %d\n", mtu)
 
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
@@ -665,7 +748,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 	}
 	defer ln.Close()
 	go func() {
-		err := acceptSessions(ln, privkey, pubkey, upstream.(*net.TCPAddr))
+		err := acceptSessions(ln, privkey, pubkey, mtu, upstream.(*net.TCPAddr))
 		if err != nil {
 			log.Printf("acceptSessions: %v\n", err)
 		}
@@ -677,7 +760,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 	defer close(ch)
 
 	go func() {
-		err := sendLoop(dnsConn, ttConn, ch)
+		err := sendLoop(dnsConn, ttConn, ch, maxEncodedPayload)
 		if err != nil {
 			log.Printf("sendLoop: %v", err)
 		}
