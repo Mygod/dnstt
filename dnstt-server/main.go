@@ -22,6 +22,11 @@
 // The -udp option controls the address that will listen for incoming DNS
 // queries.
 //
+// The -mtu option controls the maximum size of response UDP payloads.
+// Queries that do not advertise requestor support for responses of at least
+// this size at least this size will be responded to with a FORMERR. The default
+// value is maxUDPPayload.
+//
 // DOMAIN is the root of the DNS zone reserved for the tunnel. See README for
 // instructions on setting it up.
 //
@@ -57,19 +62,6 @@ const (
 	// How to set the TTL field in Answer resource records.
 	responseTTL = 60
 
-	// We don't send UDP payloads larger than this, in an attempt to avoid
-	// network-layer fragmentation. 1280 is the minimum IPv6 MTU, 40 bytes
-	// is the size of an IPv6 header (though without any extension headers),
-	// and 8 bytes is the size of a UDP header.
-	//
-	// https://dnsflagday.net/2020/#message-size-considerations
-	// "An EDNS buffer size of 1232 bytes will avoid fragmentation on nearly
-	// all current networks."
-	//
-	// On 2020-04-19, the Quad9 resolver was seen to have a UDP payload size
-	// of 1232. Cloudflare's was 1452, and Google's was 4096.
-	maxUDPPayload = 1280 - 40 - 8
-
 	// How long we may wait for downstream data before sending an empty
 	// response. If another query comes in while we are waiting, we'll send
 	// an empty response anyway and restart the delay timer for the next
@@ -79,6 +71,23 @@ const (
 	// to be the query timeout of the Quad9 DoH server.
 	// https://dnsencryption.info/imc19-doe.html Section 4.2, Finding 2.4
 	maxResponseDelay = 1 * time.Second
+)
+
+var (
+	// We don't send UDP payloads larger than this, in an attempt to avoid
+	// network-layer fragmentation. 1280 is the minimum IPv6 MTU, 40 bytes
+	// is the size of an IPv6 header (though without any extension headers),
+	// and 8 bytes is the size of a UDP header.
+	//
+	// Control this value with the -mtu command-line option.
+	//
+	// https://dnsflagday.net/2020/#message-size-considerations
+	// "An EDNS buffer size of 1232 bytes will avoid fragmentation on nearly
+	// all current networks."
+	//
+	// On 2020-04-19, the Quad9 resolver was seen to have a UDP payload size
+	// of 1232. Cloudflare's was 1452, and Google's was 4096.
+	maxUDPPayload = 1280 - 40 - 8
 )
 
 // base32Encoding is a base32 encoding without padding.
@@ -741,7 +750,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 		}
 		return fmt.Errorf("maximum UDP payload size of %d leaves only %d bytes for payload", maxUDPPayload, mtu)
 	}
-	log.Printf("MTU %d\n", mtu)
+	log.Printf("effective MTU %d\n", mtu)
 
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
@@ -790,6 +799,7 @@ Example:
 		flag.PrintDefaults()
 	}
 	flag.BoolVar(&genKey, "gen-key", false, "generate a server keypair; print to stdout or save to files")
+	flag.IntVar(&maxUDPPayload, "mtu", maxUDPPayload, "maximum size of DNS responses")
 	flag.StringVar(&privkeyString, "privkey", "", fmt.Sprintf("server private key (%d hex digits)", noise.KeyLen*2))
 	flag.StringVar(&privkeyFilename, "privkey-file", "", "read server private key from file (with -gen-key, write to file)")
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "with -gen-key, write server public key to file")

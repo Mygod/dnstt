@@ -1,4 +1,0 @@
-In server, derive maxEncodedPayload from maxUDPPayload automatically
-(by, e.g., binary search). Then, we could provide a -max-payload
-command-line option or similar that people could set to 512, for
-compatibility with all resolvers at the cost of bandwidth.

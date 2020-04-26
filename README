@@ -245,3 +245,31 @@ If you run the server without `-privkey-file` or `-privkey`, it will
 generate a temporary keypair and print the public key in the log. But
 the key will be different the next time you restart the server, and you
 will have to reconfigure clients.
+
+
+## Payload sizes
+
+In the client, the available space for user data per query depends on
+the length of the domain name in use. Shorter domain names leave more
+space for user data.
+
+In the server, the available space for user data per response depends on
+the maximum UDP payload size. The larger the UDP payload size, the more
+space there is for user data. You want to use as large a UDP payload
+size as possible, but not larger than what is supported by the resolver
+you are using. Values above 1452 may cause IP fragmentation which can
+reduce performance. You can control the maximum UDP payload size with
+the `-mtu` option. The default is 1232 bytes; this ought to be supported
+by most resolvers that understand EDNS(0) (RFC 6891). For maximum
+compatibility, set the maximum to 512, but know that doing so will
+reduce downstream bandwidth.
+```
+$ ./dnstt-client -mtu 512 -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+```
+
+The client and server emit an "effective MTU" log line when starting up
+that shows how much space is available for user data in each query or
+response. For the server, there may be more space available in some
+responses and less in others (depending on the size of the corresponding
+query); the logged value is the minimum that is guaranteed to be
+supported in any response.
