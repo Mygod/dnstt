@@ -722,6 +722,8 @@ func computeMaxEncodedPayload(limit int) int {
 func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net.PacketConn) error {
 	defer dnsConn.Close()
 
+	log.Printf("pubkey %x", pubkey)
+
 	// We have a variable amount of room in which to encode downstream
 	// packets in each response, because each response must contain the
 	// query's Question section, which is of variable length. But we cannot
@@ -753,8 +755,6 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 			log.Printf("acceptSessions: %v\n", err)
 		}
 	}()
-
-	log.Printf("pubkey %x", pubkey)
 
 	ch := make(chan *record, 100)
 	defer close(ch)
