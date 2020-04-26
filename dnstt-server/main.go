@@ -340,14 +340,11 @@ func nextPacket(r *bytes.Reader) ([]byte, error) {
 }
 
 // responseFor constructs a response dns.Message that is appropriate for query.
-// Along with the dns.Message, it returns the ClientID extracted from the query
-// and its decoded data payload. If the returned dns.Message is nil, it means
-// that there should be no response to this query. If the returned dns.Message
-// has an Rcode() of dns.RcodeNoError, the message is a candidate for for
-// carrying downstream data in a TXT record.
-func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel.ClientID, []byte) {
-	var clientID turbotunnel.ClientID
-
+// Along with the dns.Message, it returns the query's decoded data payload. If
+// the returned dns.Message is nil, it means that there should be no response to
+// this query. If the returned dns.Message has an Rcode() of dns.RcodeNoError,
+// the message is a candidate for for carrying downstream data in a TXT record.
+func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	resp := &dns.Message{
 		ID:       query.ID,
 		Flags:    0x8000, // QR = 1, RCODE = no error
@@ -356,7 +353,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 
 	if query.Flags&0x8000 != 0 {
 		// QR != 0, this is not a query. Don't even send a response.
-		return nil, clientID, nil
+		return nil, nil
 	}
 
 	// Check for EDNS(0) support. Include our own OPT RR only if we receive
@@ -377,7 +374,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			// received, a FORMERR (RCODE=1) MUST be returned."
 			resp.Flags |= dns.RcodeFormatError
 			log.Printf("FORMERR: more than one OPT RR")
-			return resp, clientID, nil
+			return resp, nil
 		}
 		resp.Additional = append(resp.Additional, dns.RR{
 			Name:  dns.Name{},
@@ -397,7 +394,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 			resp.Flags |= dns.ExtendedRcodeBadVers & 0xf
 			additional.TTL = (dns.ExtendedRcodeBadVers >> 4) << 24
 			log.Printf("BADVERS: EDNS version %d != 0", version)
-			return resp, clientID, nil
+			return resp, nil
 		}
 
 		payloadSize = int(rr.Class)
@@ -414,7 +411,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if len(query.Question) != 1 {
 		resp.Flags |= dns.RcodeFormatError
 		log.Printf("FORMERR: too many questions (%d)", len(query.Question))
-		return resp, clientID, nil
+		return resp, nil
 	}
 	question := query.Question[0]
 	// Check the name to see if it ends in our chosen domain, and extract
@@ -426,7 +423,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		// Not a name we are authoritative for.
 		resp.Flags |= dns.RcodeNameError
 		log.Printf("NXDOMAIN: not authoritative for %s", question.Name)
-		return resp, clientID, nil
+		return resp, nil
 	}
 	resp.Flags |= 0x0400 // AA = 1
 
@@ -434,7 +431,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		// We don't support OPCODE != QUERY.
 		resp.Flags |= dns.RcodeNotImplemented
 		log.Printf("NOTIMPL: unrecognized OPCODE %d", query.Opcode())
-		return resp, clientID, nil
+		return resp, nil
 	}
 
 	if question.Type != dns.RRTypeTXT {
@@ -445,7 +442,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		// suspect this is related to QNAME minimization, but I'm not
 		// sure. https://tools.ietf.org/html/rfc7816
 		// log.Printf("NXDOMAIN: QTYPE %d != TXT", question.Type)
-		return resp, clientID, nil
+		return resp, nil
 	}
 
 	encoded := bytes.ToUpper(bytes.Join(prefix, nil))
@@ -455,18 +452,9 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 		// Base32 error, make like the name doesn't exist.
 		resp.Flags |= dns.RcodeNameError
 		log.Printf("NXDOMAIN: base32 decoding: %v", err)
-		return resp, clientID, nil
+		return resp, nil
 	}
 	payload = payload[:n]
-
-	// Now extract the ClientID.
-	n = copy(clientID[:], payload)
-	if n < len(clientID) {
-		// Payload is not long enough to contain a ClientID.
-		resp.Flags |= dns.RcodeNameError
-		log.Printf("NXDOMAIN: %d bytes are too short to contain a ClientID", n)
-		return resp, clientID, nil
-	}
 
 	// We require clients to support EDNS(0) with a minimum payload size;
 	// otherwise we would have to set a small KCP MTU (only around 200
@@ -477,10 +465,10 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, turbotunnel
 	if payloadSize < maxUDPPayload {
 		resp.Flags |= dns.RcodeFormatError
 		log.Printf("FORMERR: requestor payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
-		return resp, clientID, nil
+		return resp, nil
 	}
 
-	return resp, clientID, payload[len(clientID):]
+	return resp, payload
 }
 
 // record represents a DNS message appropriate for a response to a previously
@@ -517,7 +505,18 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 			continue
 		}
 
-		resp, clientID, payload := responseFor(&query, domain)
+		resp, payload := responseFor(&query, domain)
+		// Extract the ClientID from the payload.
+		var clientID turbotunnel.ClientID
+		n = copy(clientID[:], payload)
+		payload = payload[n:]
+		if n < len(clientID) {
+			// Payload is not long enough to contain a ClientID.
+			if resp != nil && resp.Rcode() == dns.RcodeNoError {
+				resp.Flags |= dns.RcodeNameError
+			}
+			log.Printf("NXDOMAIN: %d bytes are too short to contain a ClientID", n)
+		}
 		// If a response is called for, pass it to sendLoop via the channel.
 		if resp != nil {
 			select {
