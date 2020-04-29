@@ -191,26 +191,30 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 		}
 
 		payload := dnsResponsePayload(&resp, c.domain)
-		// Reading anything gives sendLoop license to poll immediately.
-		if len(payload) > 0 {
-			select {
-			case c.pollChan <- struct{}{}:
-			default:
-			}
-			select {
-			case c.pollChan <- struct{}{}:
-			default:
-			}
-		}
 
 		// Pull out the packets contained in the payload.
 		r := bytes.NewReader(payload)
+		any := false
 		for {
 			p, err := nextPacket(r)
 			if err != nil {
 				break
 			}
+			any = true
 			c.QueuePacketConn.QueueIncoming(p, addr)
+		}
+
+		// If the payload contained one or more packets, permit sendLoop
+		// to poll immediately.
+		if any {
+			select {
+			case c.pollChan <- struct{}{}:
+			default:
+			}
+			select {
+			case c.pollChan <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
