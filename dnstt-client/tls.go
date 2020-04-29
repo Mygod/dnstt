@@ -111,7 +111,7 @@ func (c *TLSPacketConn) sendLoop(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
-		conn.Write(p)
+		_, err = conn.Write(p)
 		if err != nil {
 			return err
 		}
