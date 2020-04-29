@@ -506,7 +506,19 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 		var clientID turbotunnel.ClientID
 		n = copy(clientID[:], payload)
 		payload = payload[n:]
-		if n < len(clientID) {
+		if n == len(clientID) {
+			// Discard padding and pull out the packets contained in
+			// the payload.
+			r := bytes.NewReader(payload)
+			for {
+				p, err := nextPacket(r)
+				if err != nil {
+					break
+				}
+				// Feed the incoming packet to KCP.
+				ttConn.QueueIncoming(p, clientID)
+			}
+		} else {
 			// Payload is not long enough to contain a ClientID.
 			if resp != nil && resp.Rcode() == dns.RcodeNoError {
 				resp.Flags |= dns.RcodeNameError
@@ -519,16 +531,6 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 			case ch <- &record{resp, addr, clientID}:
 			default:
 			}
-		}
-		// Discard padding and pull out the packets contained in the payload.
-		r := bytes.NewReader(payload)
-		for {
-			p, err := nextPacket(r)
-			if err != nil {
-				break
-			}
-			// Feed the incoming packet to KCP.
-			ttConn.QueueIncoming(p, clientID)
 		}
 	}
 }
