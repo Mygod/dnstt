@@ -510,8 +510,8 @@ func recvLoop(domain dns.Name, dnsConn net.PacketConn, ttConn *turbotunnel.Queue
 			// Payload is not long enough to contain a ClientID.
 			if resp != nil && resp.Rcode() == dns.RcodeNoError {
 				resp.Flags |= dns.RcodeNameError
+				log.Printf("NXDOMAIN: %d bytes are too short to contain a ClientID", n)
 			}
-			log.Printf("NXDOMAIN: %d bytes are too short to contain a ClientID", n)
 		}
 		// If a response is called for, pass it to sendLoop via the channel.
 		if resp != nil {
