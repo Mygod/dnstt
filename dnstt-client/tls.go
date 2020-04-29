@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/tls"
 	"encoding/binary"
 	"io"
@@ -81,9 +82,10 @@ func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 // recvLoop reads length-prefixed messages from conn and passes them to the
 // incoming queue.
 func (c *TLSPacketConn) recvLoop(conn net.Conn) error {
+	br := bufio.NewReader(conn)
 	for {
 		var length uint16
-		err := binary.Read(conn, binary.BigEndian, &length)
+		err := binary.Read(br, binary.BigEndian, &length)
 		if err != nil {
 			if err == io.EOF {
 				err = nil
@@ -91,7 +93,7 @@ func (c *TLSPacketConn) recvLoop(conn net.Conn) error {
 			return err
 		}
 		p := make([]byte, int(length))
-		_, err = io.ReadFull(conn, p)
+		_, err = io.ReadFull(br, p)
 		if err != nil {
 			return err
 		}
@@ -102,16 +104,21 @@ func (c *TLSPacketConn) recvLoop(conn net.Conn) error {
 // sendLoop reads messages from the outgoing queue and writes them,
 // length-prefixed, to conn.
 func (c *TLSPacketConn) sendLoop(conn net.Conn) error {
+	bw := bufio.NewWriter(conn)
 	for p := range c.QueuePacketConn.OutgoingQueue(turbotunnel.DummyAddr{}) {
 		length := uint16(len(p))
 		if int(length) != len(p) {
 			panic(len(p))
 		}
-		err := binary.Write(conn, binary.BigEndian, &length)
+		err := binary.Write(bw, binary.BigEndian, &length)
 		if err != nil {
 			return err
 		}
-		_, err = conn.Write(p)
+		_, err = bw.Write(p)
+		if err != nil {
+			return err
+		}
+		err = bw.Flush()
 		if err != nil {
 			return err
 		}
