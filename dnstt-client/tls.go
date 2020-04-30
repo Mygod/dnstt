@@ -61,7 +61,7 @@ func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 			go func() {
 				err := c.sendLoop(conn)
 				if err != nil {
-					log.Printf("recvLoop: %v", err)
+					log.Printf("sendLoop: %v", err)
 				}
 				wg.Done()
 			}()
