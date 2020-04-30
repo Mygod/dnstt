@@ -591,36 +591,45 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 		loop:
 			for {
 				select {
-				case p := <-ttConn.OutgoingQueue(rec.ClientID):
-					// We wait for the first packet in a
-					// bundle only. The second and later
-					// packets must be immediately available
-					// or they will be omitted from this
-					// send.
-					timer.Reset(0)
-
-					if int(uint16(len(p))) != len(p) {
-						panic(len(p))
-					}
-					if 2+len(p) > limit {
-						// Save this packet to send in
-						// the next response.
-						nextP = p
-						break loop
-					}
-					limit -= 2 + len(p)
-					binary.Write(&payload, binary.BigEndian, uint16(len(p)))
-					payload.Write(p)
+				// Prioritize the first two cases over the
+				// OutgoingQueue case. The first two cases are
+				// duplicated under the default case.
+				case nextRec = <-ch:
+					// If there's another response
+					// waiting to be sent, wait no
+					// longer for a payload for this
+					// one.
+					break loop
+				case <-timer.C:
+					break loop
 				default:
 					select {
 					case nextRec = <-ch:
-						// If there's another response
-						// waiting to be sent, wait no
-						// longer for a payload for this
-						// one.
 						break loop
 					case <-timer.C:
 						break loop
+					case p := <-ttConn.OutgoingQueue(rec.ClientID):
+						// We wait for the first packet
+						// in a bundle only. The second
+						// and later packets must be
+						// immediately available or they
+						// will be omitted from this
+						// send.
+						timer.Reset(0)
+
+						if int(uint16(len(p))) != len(p) {
+							panic(len(p))
+						}
+						if 2+len(p) > limit {
+							// Save this packet to
+							// send in the next
+							// response.
+							nextP = p
+							break loop
+						}
+						limit -= 2 + len(p)
+						binary.Write(&payload, binary.BigEndian, uint16(len(p)))
+						payload.Write(p)
 					}
 				}
 			}
