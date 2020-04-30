@@ -778,6 +778,9 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 	ch := make(chan *record, 100)
 	defer close(ch)
 
+	// We could run multiple copies of sendLoop; that would allow more time
+	// for each response to collect downstream data before being evicted by
+	// another response that needs to be sent.
 	go func() {
 		err := sendLoop(dnsConn, ttConn, ch, maxEncodedPayload)
 		if err != nil {
