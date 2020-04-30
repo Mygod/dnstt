@@ -8,16 +8,22 @@ import (
 )
 
 // remoteRecord is a record of a recently seen remote peer, with the time it was
-// last seen and a send queue.
+// last seen and queues of outgoing packets.
 type remoteRecord struct {
 	Addr      net.Addr
 	LastSeen  time.Time
 	SendQueue chan []byte
+	Stash     chan []byte
 }
 
 // RemoteMap manages a mapping of live remote peers, keyed by address, to their
-// respective send queues. RemoteMap's functions are safe to call from multiple
-// goroutines.
+// respective send queues. Each peer has two queues: a primary send queue, and a
+// "stash". The primary send queue is returned by the SendQueue method. The
+// stash is an auxiliary one-element queue accessed using the Stash and Unstash
+// methods. The stash is meant for use by callers that need to "unread" a packet
+// that's already been removed from the primary send queue.
+//
+// RemoteMap's functions are safe to call from multiple goroutines.
 type RemoteMap struct {
 	// We use an inner structure to avoid exposing public heap.Interface
 	// functions to users of remoteMap.
@@ -62,7 +68,28 @@ func NewRemoteMap(timeout time.Duration) *RemoteMap {
 func (m *RemoteMap) SendQueue(addr net.Addr) chan []byte {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	return m.inner.SendQueue(addr, time.Now())
+	return m.inner.Lookup(addr, time.Now()).SendQueue
+}
+
+// Stash places p in the stash corresponding to addr, if the stash is not
+// already occupied. Returns true if the p was placed in the stash, false
+// otherwise.
+func (m *RemoteMap) Stash(addr net.Addr, p []byte) bool {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	select {
+	case m.inner.Lookup(addr, time.Now()).Stash <- p:
+		return true
+	default:
+		return false
+	}
+}
+
+// Unstash returns the channel that reads from the stash for addr.
+func (m *RemoteMap) Unstash(addr net.Addr) <-chan []byte {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	return m.inner.Lookup(addr, time.Now()).Stash
 }
 
 // remoteMapInner is the inner type of RemoteMap, implementing heap.Interface.
@@ -84,10 +111,10 @@ func (inner *remoteMapInner) removeExpired(now time.Time, timeout time.Duration)
 	}
 }
 
-// SendQueue finds the existing record corresponding to addr, or creates a new
-// one if none exists yet. It updates the record's LastSeen time and returns its
-// SendQueue.
-func (inner *remoteMapInner) SendQueue(addr net.Addr, now time.Time) chan []byte {
+// Lookup finds the existing record corresponding to addr, or creates a new
+// one if none exists yet. It updates the record's LastSeen time and returns the
+// record.
+func (inner *remoteMapInner) Lookup(addr net.Addr, now time.Time) *remoteRecord {
 	var record *remoteRecord
 	i, ok := inner.byAddr[addr]
 	if ok {
@@ -101,10 +128,11 @@ func (inner *remoteMapInner) SendQueue(addr net.Addr, now time.Time) chan []byte
 			Addr:      addr,
 			LastSeen:  now,
 			SendQueue: make(chan []byte, queueSize),
+			Stash:     make(chan []byte, 1),
 		}
 		heap.Push(inner, record)
 	}
-	return record.SendQueue
+	return record
 }
 
 // heap.Interface for remoteMapInner.

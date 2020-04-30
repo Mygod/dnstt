@@ -21,6 +21,17 @@ type taggedPacket struct {
 // method inserts a packet into the incoming queue, to eventually be returned by
 // ReadFrom. WriteTo inserts a packet into an address-specific outgoing queue,
 // which can later by accessed through the OutgoingQueue method.
+//
+// Besides the outgoing queues, there is also a one-element "stash" for each
+// remote peer address. You can stash a packet using the Stash method, and get
+// it back later by receiving from the channel returned by Unstash. The stash is
+// meant as a convenient place to temporarily store a single packet, such as
+// when you've read one too many packets from the send queue and need to store
+// the extra packet to be processed first in the next pass. It's the caller's
+// responsibility to Unstash what they have Stashed. Calling Stash does not put
+// the packet at the head of the send queue; if there is the possibility that a
+// packet has been stashed, it must be checked for by calling Unstash in
+// addition to OutgoingQueue.
 type QueuePacketConn struct {
 	remotes   *RemoteMap
 	localAddr net.Addr
@@ -66,6 +77,20 @@ func (c *QueuePacketConn) QueueIncoming(p []byte, addr net.Addr) {
 // written to the address in question using WriteTo.
 func (c *QueuePacketConn) OutgoingQueue(addr net.Addr) <-chan []byte {
 	return c.remotes.SendQueue(addr)
+}
+
+// Stash places p in the stash for addr, if the stash is not already occupied.
+// Returns true if the packet was placed in the stash, or false if the stash was
+// already occupied. This method is similar to WriteTo, except that it puts the
+// packet in the stash queue (accessible via Unstash), rather than the outgoing
+// queue (accessible via OutgoingQueue).
+func (c *QueuePacketConn) Stash(p []byte, addr net.Addr) bool {
+	return c.remotes.Stash(addr, p)
+}
+
+// Unstash returns the channel that represents the stash for addr.
+func (c *QueuePacketConn) Unstash(addr net.Addr) <-chan []byte {
+	return c.remotes.Unstash(addr)
 }
 
 // ReadFrom returns a packet and address previously stored by QueueIncoming.
