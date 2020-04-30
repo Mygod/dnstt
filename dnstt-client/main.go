@@ -121,6 +121,12 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {
 	defer pconn.Close()
 
+	ln, err := net.ListenTCP("tcp", localAddr)
+	if err != nil {
+		return fmt.Errorf("opening local listener: %v", err)
+	}
+	defer ln.Close()
+
 	mtu := dnsNameCapacity(domain) - 8 - 1 - numPadding - 1 // clientid + padding length prefix + padding + data length prefix
 	if mtu < 80 {
 		return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
@@ -166,11 +172,6 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 		return fmt.Errorf("opening smux session: %v", err)
 	}
 	defer sess.Close()
-
-	ln, err := net.ListenTCP("tcp", localAddr)
-	if err != nil {
-		return fmt.Errorf("opening local listener: %v", err)
-	}
 
 	for {
 		local, err := ln.Accept()
