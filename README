@@ -76,7 +76,7 @@ pubkey  written to server.pub
 Run the server. You need to provide an address that will listen for UDP
 DNS packets (`:5300`), the private key file (`server.key`), the root of
 the DNS zone (`t.example.com`), and a TCP address to which incoming
-tunnel stream will be forwarded (`127.0.0.1:8000`).
+tunnel streams will be forwarded (`127.0.0.1:8000`).
 ```
 $ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
