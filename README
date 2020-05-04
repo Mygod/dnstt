@@ -11,10 +11,6 @@ dnstt is a DNS tunnel with these features:
  * Encrypts the contents of the tunnel and authenticates the server by
    public key.
 
-It has these noteworthy limitations:
- * Requires intermediary resolvers to support large responses (1232 bytes,
-   which is more than the mandated minimum of 512 bytes).
-
 dnstt is an application-layer tunnel that runs in userspace. It doesn't
 provide a TUN/TAP interface; it only hooks up a local TCP port with a
 remote TCP port (like netcat or `ssh -L`) by way of a DNS resolver. It
@@ -23,10 +19,15 @@ the same effect by running a proxy on the tunnel server and having the
 tunnel terminate at the proxy.
 
 ```
-.------.               .--------.             .------.
-|tunnel|-- DoH / DoT --|resolver|-- UDP DNS --|tunnel|
-|client|               '--------'             |server|
-'------'                                      '------'
+.------.  |            .---------.             .------.
+|tunnel|  |            | public  |             |tunnel|
+|client|<---DoH/DoT--->|recursive|<--UDP DNS-->|server|
+'------'  |c           |resolver |             '------'
+   |      |e           '---------'                |
+.------.  |n                                   .------.
+|local |  |s                                   |remote|
+| app  |  |o                                   | app  |
+'------'  |r                                   '------'
 ```
 
 
@@ -83,8 +84,8 @@ The tunnel server needs to be able to receive packets on an external
 port 53. You can have it listen on port 53 directly using `-udp :53`,
 but that requires the program to run as root. It is better to run the
 program as an ordinary user and have it listen on an unprivileged port
-(`:5300` above), and port-forward port 53 to it. On Linux, use this
-command to forward external port 53 to localhost port 5300:
+(`:5300` above), and port-forward port 53 to it. On Linux, use these
+commands to forward external port 53 to localhost port 5300:
 ```
 # iptables -I INPUT -p udp --dport 5300 -j ACCEPT
 # iptables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
@@ -149,7 +150,7 @@ tunnel and should only be used for testing.
 
 You can make the tunnel into a general-purpose proxy by running a proxy
 server and connecting the server end of the tunnel to it. For example,
-Ncat has a built-in simple HTTP server:
+Ncat has a built-in simple HTTP/HTTPS proxy:
 ```
 $ ncat -lkv --proxy-type http 127.0.0.1 8000
 $ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
@@ -209,12 +210,12 @@ The NK handshake pattern authenticates the server but not the client.
 The Noise layer is sandwiched between two other protocol layers: KCP
 (https://github.com/xtaci/kcp-go) which creates a reliable stream on top
 of unreliable datagrams, and smux (https://github.com/xtaci/smux) which
-provides stream multiplexing and session features. An observer (such as
-the intermediary resolver) may read the headers of the KCP layer, but not
-of the smux layer nor of the streams that are inside. The model is
-similar to what you would get with TLS or SSH over TCP: an observer can
-see TCP-level ACKs and sequence numbers, but cannot read the stream data
-inside.
+provides stream multiplexing and session features. An observer who can
+see DNS messages, such as the intermediary resolver, will be able to see
+the headers of the KCP layer, but not of the smux layer nor of the
+streams that are inside. The model is similar to what you would get with
+TLS or SSH over TCP: an observer can see TCP-level ACKs and sequence
+numbers, but cannot read the stream data.
 
 ```
 application data
@@ -259,12 +260,12 @@ space there is for user data. You want to use as large a UDP payload
 size as possible, but not larger than what is supported by the resolver
 you are using. Values above 1452 may cause IP fragmentation which can
 reduce performance. You can control the maximum UDP payload size with
-the `-mtu` option. The default is 1232 bytes; this ought to be supported
-by most resolvers that understand EDNS(0) (RFC 6891). For maximum
-compatibility, set the maximum to 512, but know that doing so will
-reduce downstream bandwidth.
+the `-mtu` option on the server. The default is 1232 bytes; this ought
+to be supported by most resolvers that understand EDNS(0) (RFC 6891).
+For maximum compatibility, set the maximum to 512, but know that doing
+so will reduce downstream bandwidth.
 ```
-$ ./dnstt-client -mtu 512 -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+$ ./dnstt-server -mtu 512 -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
 ```
 
 The client and server emit an "effective MTU" log line when starting up
