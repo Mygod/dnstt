@@ -1,0 +1,35 @@
+## v0.20200504.0
+
+Documentation updates and link to web page.
+https://www.bamsoftware.com/software/dnstt/
+
+
+## v0.20200430.0
+
+Send leftover packets (those that were too big to fit in the current DNS
+response) to the correct client in the future. Before, such leftover
+packets were included in the next response to be sent, regardless of the
+client it was intended for.
+
+Fix the loop that packs packets into responses in the server. Before, if
+there were not a packet immediately available, the response would always
+be empty. Now, a packet has until the response timeout to be included.
+
+Buffer the DoT transport in the client so that length prefixes and DNS
+queries happen in the same send.
+
+Don't look for encoded packets in a response that was too short to
+contain a ClientID.
+
+
+## v0.20200426.0
+
+Added the -mtu command-line option to the server.
+
+Documentation fixes.
+
+
+## v0.20200419.0
+
+Initial public release and announcement.
+https://github.com/net4people/bbs/issues/30
