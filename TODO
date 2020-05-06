@@ -1,0 +1,11 @@
+Randomize the source port for each query in plain-UDP mode. Currently we
+create a socket with net.ListenUDP and use it for all queries, which
+means all queries have the same source address. ValdikSS reports that in
+regions of Turkmenistan, UDP associations that use the same 4-tuple are
+blocked after a few seconds.
+https://ntc.party/t/topic/475
+My idea for this is to create a new PacketConn abstraction that creates
+a bunch (≈100) of goroutines that each do a single query at a time,
+creating a new socket for each one and waiting for a response on the
+same socket up to a timeout. Similar to HTTPPacketConn and its multiple
+instantiations of sendLoop.
