@@ -500,7 +500,6 @@ func TestEncodeRDataTXT(t *testing.T) {
 	// 255 bytes should be able to be encoded into 256 bytes.
 	p = make([]byte, 255)
 	encoded = EncodeRDataTXT(p)
-	t.Errorf("%x", encoded)
 	if len(encoded) > 256 {
 		t.Errorf("EncodeRDataTXT(%d bytes) returned %d bytes", len(p), len(encoded))
 	}
