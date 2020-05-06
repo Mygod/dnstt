@@ -61,14 +61,14 @@ aaaa.t.example.com, it will forward the query to the tunnel server at
 
 Compile the server:
 ```
-$ cd dnstt-server
-$ go build
+tunnel-server$ cd dnstt-server
+tunnel-server$ go build
 ```
 
 First you need to generate the server keypair that will be used to
 authenticate the server and encrypt the tunnel.
 ```
-$ ./dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
+tunnel-server$ ./dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
 privkey written to server.key
 pubkey  written to server.pub
 ```
@@ -78,7 +78,7 @@ DNS packets (`:5300`), the private key file (`server.key`), the root of
 the DNS zone (`t.example.com`), and a TCP address to which incoming
 tunnel streams will be forwarded (`127.0.0.1:8000`).
 ```
-$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
 The tunnel server needs to be able to receive packets on an external
@@ -88,17 +88,17 @@ program as an ordinary user and have it listen on an unprivileged port
 (`:5300` above), and port-forward port 53 to it. On Linux, use these
 commands to forward external port 53 to localhost port 5300:
 ```
-# iptables -I INPUT -p udp --dport 5300 -j ACCEPT
-# iptables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
-# ip6tables -I INPUT -p udp --dport 5300 -j ACCEPT
-# ip6tables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
+tunnel-server$ sudo iptables -I INPUT -p udp --dport 5300 -j ACCEPT
+tunnel-server$ sudo iptables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
+tunnel-server$ sudo ip6tables -I INPUT -p udp --dport 5300 -j ACCEPT
+tunnel-server$ sudo ip6tables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
 ```
 
 You need to also run something for the tunnel server to connect to. It
 can be a proxy server or anything else. For testing, you can use an
 Ncat listener:
 ```
-$ ncat -lkv 127.0.0.1 8000
+tunnel-server$ ncat -lkv 127.0.0.1 8000
 ```
 
 
@@ -106,8 +106,8 @@ $ ncat -lkv 127.0.0.1 8000
 
 Compile the client:
 ```
-$ cd dnstt-client
-$ go build
+tunnel-client$ cd dnstt-client
+tunnel-client$ go build
 ```
 
 Copy the server.pub file from the server to the client. You don't need
@@ -127,18 +127,18 @@ files (`server.pub`), the root of the DNS zone (`t.example.com`), and
 the local TCP port that will receive connections and forward them
 through the tunnel (`127.0.0.1:7000`):
 ```
-$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
 ```
 
 For DoT, it's the same, but use the `-dot` option instead:
 ```
-$ ./dnstt-client -dot dot.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
+tunnel-client$ ./dnstt-client -dot dot.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
 ```
 
 Once the tunnel client is running, you can connect to the local end of
 the tunnel, type something, and see it appear at the remote end.
 ```
-$ ncat -v 127.0.0.1 7000
+tunnel-client$ ncat -v 127.0.0.1 7000
 ```
 
 The client also has a plaintext UDP mode that can work through a
@@ -149,21 +149,82 @@ tunnel and should only be used for testing.
 
 ## How to make a proxy
 
-You can make the tunnel into a general-purpose proxy by running a proxy
-server and connecting the server end of the tunnel to it. For example,
-Ncat has a built-in simple HTTP/HTTPS proxy:
+dnstt is only a tunnel; it's up to you what you want to connect to it.
+You can make the tunnel work like an ordinary SOCKS or HTTP proxy by
+having the tunnel server forward to a standard proxy server. There are
+many ways to set it up; here are some examples.
+
+
+### Ncat HTTP proxy
+
+Ncat has a simple built-in HTTP/HTTPS proxy, good for testing. Be aware
+that Ncat's proxy isn't intended for use by untrusted clients; it won't
+prevent them from connecting to localhost ports on the tunnel server,
+for example. 
+
 ```
-$ ncat -lkv --proxy-type http 127.0.0.1 8000
-$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+tunnel-server$ ncat -lkv --proxy-type http 127.0.0.1 8000
+tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
 On the client, have the tunnel client listen on 127.0.0.1:7000, and configure
-your applications to use http://127.0.0.1:7000/ as an HTTP proxy.
+your applications to use 127.0.0.1:7000 as an HTTP proxy.
 
 ```
-$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
-$ curl -x http://127.0.0.1:7000/ http://example.com/
+tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+tunnel-client$ curl --proxy http://127.0.0.1:7000/ https://wtfismyip.com/text
 ```
+
+
+### SSH SOCKS proxy
+
+
+OpenSSH has a built-in SOCKS proxy. If you run an SSH server on the
+tunnel server, you can use dnstt to tunnel the SSH connection, the SSH
+server will proxy connections for you. Let's assume you have the SSH
+details configured so that you can run `ssh tunnel-server` on the tunnel
+client. Make sure `AllowTcpForwarding` is set to `yes` (the default
+value) in sshd_config.
+
+```
+tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:22
+```
+
+The `HostKeyAlias` ssh option lets you connect to `tunnel-server` as if
+it were located at 127.0.0.1:2222. Replace `tunnel-server` with the
+hostname or IP address of the SSH server.
+
+```
+tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:2222
+tunnel-client$ ssh -v -N -D 127.0.0.1:7000 -o HostKeyAlias=tunnel-server -p 2222 127.0.0.1
+tunnel-client$ curl --proxy http://127.0.0.1:7000/ https://wtfismyip.com/text
+```
+
+
+### Tor bridge
+
+You can run a Tor bridge on the tunnel server and tunnel the connection
+to the bridge with dnstt, using dnstt as like a pluggable transport. The
+Tor client provides a SOCKS interface that other programs can use. Let's
+say your Tor bridge's ORPort is 9001.
+
+```
+tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:9001
+```
+
+```
+tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+```
+
+Add a Bridge line to /etc/tor/torrc, or paste it into Tor Browser. You
+can get `FINGERPRINT` from /var/lib/tor/fingerprint on the bridge.
+
+```
+Bridge 127.0.0.1:7000 FINGERPRINT
+```
+
+If you use a system tor, the client SOCKS port will be 127.0.0.1:9050.
+If you use Tor Browser, it will be 127.0.0.1:9150.
 
 
 ## Covertness
