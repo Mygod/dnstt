@@ -259,6 +259,7 @@ func TestReadName(t *testing.T) {
 		// EOF while reading label.
 		{0, "\x0aexample", io.ErrUnexpectedEOF},
 		// EOF before second byte of pointer.
+		{0, "\xc0", io.ErrUnexpectedEOF},
 		{0, "\x07example\xc0", io.ErrUnexpectedEOF},
 	} {
 		r := bytes.NewReader([]byte(test.input))
