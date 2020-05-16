@@ -4,3 +4,4 @@ dnstt-server/dnstt-server
 /dnstt-client_*
 /dnstt-server_*
 /bin/
+/build/

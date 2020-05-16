@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# ss-local -s 0.0.0.1 -p 1 -l 1080 -k password --plugin dnstt-client-plugin --plugin-opts 'doh=https://doh.example/dns-query;domain=<domain>;pubkey=<pubkey>'
+
+DNSTT_CLIENT="./dnstt-client"
+
+unset TRANSPORT RESOLVER PUBKEY DOMAIN
+IFS=";" read -a OPTIONS <<<"$SS_PLUGIN_OPTIONS"
+for opt in "${OPTIONS[@]}"; do
+	IFS="=" read key value <<<"$opt"
+	case "$key" in
+		doh ) TRANSPORT=-doh; RESOLVER="$value";;
+		dot ) TRANSPORT=-dot; RESOLVER="$value";;
+		udp ) TRANSPORT=-udp; RESOLVER="$value";;
+		pubkey ) PUBKEY="$value";;
+		domain ) DOMAIN="$value";;
+	esac
+done
+
+TRANSPORT="${TRANSPORT:?need doh=, dot=, or udp=}"
+RESOLVER="${RESOLVER:?need doh=, dot=, or udp=}"
+PUBKEY="${PUBKEY:?need pubkey=}"
+DOMAIN="${DOMAIN:?need domain=}"
+SS_LOCAL_HOST="${SS_LOCAL_HOST:?}"
+SS_LOCAL_PORT="${SS_LOCAL_PORT:?}"
+
+exec "$DNSTT_CLIENT" "$TRANSPORT" "$RESOLVER" -pubkey "$PUBKEY" "$DOMAIN" "$SS_LOCAL_HOST:$SS_LOCAL_PORT"

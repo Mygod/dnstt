@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# ss-server -p 53 -k <password> --plugin dnstt-server-plugin --plugin-opts 'domain=<domain>;privkey=<privkey>'
+
+DNSTT_SERVER="./dnstt-server"
+
+unset PRIVKEY DOMAIN MTU
+IFS=";" read -a OPTIONS <<<"$SS_PLUGIN_OPTIONS"
+for opt in "${OPTIONS[@]}"; do
+	IFS="=" read key value <<<"$opt"
+	case "$key" in
+		privkey ) PRIVKEY="$value";;
+		domain ) DOMAIN="$value";;
+		mtu ) MTU="$value";;
+	esac
+done
+
+PRIVKEY="${PRIVKEY:?need privkey=}"
+DOMAIN="${DOMAIN:?need domain=}"
+SS_LOCAL_HOST="${SS_LOCAL_HOST:?}"
+SS_LOCAL_PORT="${SS_LOCAL_PORT:?}"
+SS_REMOTE_HOST="${SS_REMOTE_HOST:?}"
+SS_REMOTE_PORT="${SS_REMOTE_PORT:?}"
+
+exec "$DNSTT_SERVER" -udp "$SS_REMOTE_HOST:$SS_REMOTE_PORT" -privkey "$PRIVKEY" ${MTU:+-mtu "$MTU"} "$DOMAIN" "$SS_LOCAL_HOST:$SS_LOCAL_PORT"
