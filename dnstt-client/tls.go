@@ -17,7 +17,7 @@ import (
 // over a TLS channel, prefixing each message with a two-octet length field as
 // in DNS over TCP.
 //
-// TLSPacketConn deals only with alreaday formatted DNS messages. It does not
+// TLSPacketConn deals only with already formatted DNS messages. It does not
 // handle encoding information into the messages. That is rather the
 // responsibility of DNSPacketConn.
 //

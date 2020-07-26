@@ -26,7 +26,7 @@ var httpClient = &http.Client{Timeout: 1 * time.Minute}
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
 // requests and responses.
 //
-// HTTPPacketConn deals only with alreaday formatted DNS messages. It does not
+// HTTPPacketConn deals only with already formatted DNS messages. It does not
 // handle encoding information into the messages. That is rather the
 // responsibility of DNSPacketConn.
 //
