@@ -38,8 +38,8 @@ func TestName(t *testing.T) {
 		{[][]byte{[]byte("test")}, nil, "test"},
 		{[][]byte{[]byte("a"), []byte("b"), []byte("c")}, nil, "a.b.c"},
 
-		{[][]byte{[]byte{}}, ErrZeroLengthLabel, ""},
-		{[][]byte{[]byte("a"), []byte{}, []byte("c")}, ErrZeroLengthLabel, ""},
+		{[][]byte{{}}, ErrZeroLengthLabel, ""},
+		{[][]byte{[]byte("a"), {}, []byte("c")}, ErrZeroLengthLabel, ""},
 
 		// 63 octets.
 		{[][]byte{[]byte("0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDE")}, nil,
@@ -410,7 +410,7 @@ func TestMessageFromWireFormat(t *testing.T) {
 
 func TestMessageWireFormatRoundTrip(t *testing.T) {
 	for _, message := range []Message{
-		Message{
+		{
 			ID:    0x1234,
 			Flags: 0x0100,
 			Question: []Question{
@@ -508,7 +508,7 @@ func TestEncodeRDataTXT(t *testing.T) {
 
 func TestRDataTXTRoundTrip(t *testing.T) {
 	for _, p := range [][]byte{
-		[]byte{},
+		{},
 		[]byte("\x00"),
 		{
 			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
