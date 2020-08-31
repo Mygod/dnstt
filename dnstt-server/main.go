@@ -23,7 +23,7 @@
 // queries.
 //
 // The -mtu option controls the maximum size of response UDP payloads.
-// Queries that do not advertise requestor support for responses of at least
+// Queries that do not advertise requester support for responses of at least
 // this size at least this size will be responded to with a FORMERR. The default
 // value is maxUDPPayload.
 //
@@ -353,10 +353,10 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	}
 
 	// Check for EDNS(0) support. Include our own OPT RR only if we receive
-	// one from the requestor.
+	// one from the requester.
 	// https://tools.ietf.org/html/rfc6891#section-6.1.1
 	// "Lack of presence of an OPT record in a request MUST be taken as an
-	// indication that the requestor does not implement any part of this
+	// indication that the requester does not implement any part of this
 	// specification and that the responder MUST NOT include an OPT record
 	// in its response."
 	payloadSize := 0
@@ -460,7 +460,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	// FORMERR MUST be returned."
 	if payloadSize < maxUDPPayload {
 		resp.Flags |= dns.RcodeFormatError
-		log.Printf("FORMERR: requestor payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
+		log.Printf("FORMERR: requester payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
 		return resp, nil
 	}
 
@@ -699,7 +699,7 @@ func computeMaxEncodedPayload(limit int) int {
 			{
 				Name:  dns.Name{},
 				Type:  dns.RRTypeOPT,
-				Class: queryLimit, // requestor's UDP payload size
+				Class: queryLimit, // requester's UDP payload size
 				TTL:   0,          // extended RCODE and flags
 				Data:  []byte{},
 			},
