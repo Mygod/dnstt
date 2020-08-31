@@ -6,7 +6,7 @@
 //
 // Example:
 //     dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
-//     dnstt-server -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+//     dnstt-server -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
 //
 // To generate a persistent server private key, first run with the -gen-key
 // option. By default the generated private and public keys are printed to
@@ -805,7 +805,7 @@ func main() {
 
 Example:
   %[1]s -gen-key -privkey-file server.key -pubkey-file server.pub
-  %[1]s -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+  %[1]s -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
 
 `, os.Args[0])
 		flag.PrintDefaults()
