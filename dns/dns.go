@@ -179,7 +179,7 @@ type RR struct {
 }
 
 // readName parses a DNS name from r. It leaves r positioned just after the
-// parsed named.
+// parsed name.
 func readName(r io.ReadSeeker) (Name, error) {
 	var labels [][]byte
 	// We limit the number of compression pointers we are willing to follow.
