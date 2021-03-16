@@ -277,7 +277,7 @@ func DecodeKey(s string) ([]byte, error) {
 	return key, err
 }
 
-// DecodeKey decodes a hex-encoded private or public key.
+// EncodeKey encodes a hex-encoded private or public key.
 func EncodeKey(key []byte) string {
 	return hex.EncodeToString(key)
 }
