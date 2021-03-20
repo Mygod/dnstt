@@ -406,7 +406,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	// There must be exactly one question.
 	if len(query.Question) != 1 {
 		resp.Flags |= dns.RcodeFormatError
-		log.Printf("FORMERR: too many questions (%d)", len(query.Question))
+		log.Printf("FORMERR: too few or too many questions (%d)", len(query.Question))
 		return resp, nil
 	}
 	question := query.Question[0]
