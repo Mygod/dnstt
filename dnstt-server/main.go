@@ -237,6 +237,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 	if err != nil {
 		return err
 	}
+	defer sess.Close()
 
 	for {
 		stream, err := sess.AcceptStream()
