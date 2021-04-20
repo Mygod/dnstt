@@ -71,6 +71,9 @@ const (
 	// to be the query timeout of the Quad9 DoH server.
 	// https://dnsencryption.info/imc19-doe.html Section 4.2, Finding 2.4
 	maxResponseDelay = 1 * time.Second
+
+	// How long to wait for a TCP connection to upstream to be established.
+	upstreamDialTimeout = 30 * time.Second
 )
 
 var (
@@ -182,7 +185,10 @@ func readKeyFromFile(filename string) ([]byte, error) {
 // handleStream bidirectionally connects a client stream with a TCP socket
 // addressed by upstream.
 func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
-	upstreamConn, err := net.Dial("tcp", upstream)
+	dialer := net.Dialer{
+		Timeout: upstreamDialTimeout,
+	}
+	upstreamConn, err := dialer.Dial("tcp", upstream)
 	if err != nil {
 		return fmt.Errorf("stream %08x:%d connect upstream: %v", conv, stream.ID(), err)
 	}
