@@ -198,7 +198,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 			err = nil
 		}
 		if err != nil {
-			log.Printf("stream %08x:%d copy stream←upstream: %v\n", conv, stream.ID(), err)
+			log.Printf("stream %08x:%d copy stream←upstream: %v", conv, stream.ID(), err)
 		}
 		conn.CloseRead()
 		stream.Close()
@@ -211,7 +211,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 			err = nil
 		}
 		if err != nil && err != io.ErrClosedPipe {
-			log.Printf("stream %08x:%d copy upstream←stream: %v\n", conv, stream.ID(), err)
+			log.Printf("stream %08x:%d copy upstream←stream: %v", conv, stream.ID(), err)
 		}
 		conn.CloseWrite()
 	}()
@@ -255,7 +255,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 			}()
 			err := handleStream(stream, upstream, conn.GetConv())
 			if err != nil {
-				log.Printf("stream %08x:%d handleStream: %v\n", conn.GetConv(), stream.ID(), err)
+				log.Printf("stream %08x:%d handleStream: %v", conn.GetConv(), stream.ID(), err)
 			}
 		}()
 	}
@@ -293,7 +293,7 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream 
 			}()
 			err := acceptStreams(conn, privkey, pubkey, upstream)
 			if err != nil {
-				log.Printf("session %08x acceptStreams: %v\n", conn.GetConv(), err)
+				log.Printf("session %08x acceptStreams: %v", conn.GetConv(), err)
 			}
 		}()
 	}
@@ -760,7 +760,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 		}
 		return fmt.Errorf("maximum UDP payload size of %d leaves only %d bytes for payload", maxUDPPayload, mtu)
 	}
-	log.Printf("effective MTU %d\n", mtu)
+	log.Printf("effective MTU %d", mtu)
 
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
@@ -772,7 +772,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 	go func() {
 		err := acceptSessions(ln, privkey, pubkey, mtu, upstream.(*net.TCPAddr))
 		if err != nil {
-			log.Printf("acceptSessions: %v\n", err)
+			log.Printf("acceptSessions: %v", err)
 		}
 	}()
 
