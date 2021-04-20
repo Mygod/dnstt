@@ -145,8 +145,8 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	log.Printf("begin session %08x", conn.GetConv())
 	// Permit coalescing the payloads of consecutive sends.
 	conn.SetStreamMode(true)
-	// Disable the dynamic congestion window (limit only by the
-	// maximum of local and remote static windows).
+	// Disable the dynamic congestion window (limit only by the maximum of
+	// local and remote static windows).
 	conn.SetNoDelay(
 		0, // default nodelay
 		0, // default interval
