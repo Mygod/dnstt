@@ -101,7 +101,6 @@ func ParseName(s string) (Name, error) {
 	} else {
 		return NewName(bytes.Split(b, []byte(".")))
 	}
-	return NewName(bytes.Split(b, []byte(".")))
 }
 
 // String returns a string representation of name, with labels separated by
