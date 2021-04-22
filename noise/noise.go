@@ -111,7 +111,11 @@ func (s *socket) Write(p []byte) (int, error) {
 		if n > 4096 {
 			n = 4096
 		}
-		err := writeMessage(s.ReadWriteCloser, s.sendCipher.Encrypt(nil, nil, p[:n]))
+		msg, err := s.sendCipher.Encrypt(nil, nil, p[:n])
+		if err != nil {
+			return total, err
+		}
+		err = writeMessage(s.ReadWriteCloser, msg)
 		if err != nil {
 			return total, err
 		}
