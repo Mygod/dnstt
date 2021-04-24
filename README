@@ -98,7 +98,7 @@ You need to also run something for the tunnel server to connect to. It
 can be a proxy server or anything else. For testing, you can use an
 Ncat listener:
 ```
-tunnel-server$ ncat -lkv 127.0.0.1 8000
+tunnel-server$ ncat -l -k -v 127.0.0.1 8000
 ```
 
 
@@ -163,7 +163,7 @@ prevent them from connecting to localhost ports on the tunnel server,
 for example.
 
 ```
-tunnel-server$ ncat -lkv --proxy-type http 127.0.0.1 8000
+tunnel-server$ ncat -l -k --proxy-type http 127.0.0.1 8000
 tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
@@ -196,7 +196,7 @@ hostname or IP address of the SSH server.
 
 ```
 tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:2222
-tunnel-client$ ssh -v -N -D 127.0.0.1:7000 -o HostKeyAlias=tunnel-server -p 2222 127.0.0.1
+tunnel-client$ ssh -N -D 127.0.0.1:7000 -o HostKeyAlias=tunnel-server -p 2222 127.0.0.1
 tunnel-client$ curl --proxy socks5h://127.0.0.1:7000/ https://wtfismyip.com/text
 ```
 
