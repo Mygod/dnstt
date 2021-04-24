@@ -160,7 +160,7 @@ many ways to set it up; here are some examples.
 Ncat has a simple built-in HTTP/HTTPS proxy, good for testing. Be aware
 that Ncat's proxy isn't intended for use by untrusted clients; it won't
 prevent them from connecting to localhost ports on the tunnel server,
-for example. 
+for example.
 
 ```
 tunnel-server$ ncat -lkv --proxy-type http 127.0.0.1 8000
