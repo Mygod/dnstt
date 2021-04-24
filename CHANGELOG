@@ -1,3 +1,29 @@
+## v0.20210424.0
+
+dnstt was part of a software security audit done by Cure53. The report
+found issues of severity levels Low–Medium in dnstt and in one of its
+dependencies, a package used for Noise cryptography. This release fixes
+the following issues:
+ * UCB-02-002: Memory leak in acceptStreams() routine of dnstt server (Low)
+ * UCB-02-003: Potential nonce overflow in Noise protocol (Medium)
+ * UCB-02-004: Deprecated DH25519 Golang API used by Noise (Low)
+ * UCB-02-006: DoS due to unconditional nonce increment (Low)
+ * UCB-02-007: DoS due to missing socket timeouts (Low)
+Unaddressed in this release are:
+ * UCB-02-005: Client ID security considerations & Noise authenticated data (Low)
+ * UCB-02-008: Lack of rate limiting in Snowflake and dnstt (Info)
+Two other issues in the report, UCB-02-001 and UCB-02-009, do not have
+to do with dnstt. For more details and the text of the report, see
+https://www.bamsoftware.com/software/dnstt/security.html#cure53-turbotunnel-2021
+
+Added man pages for dnstt-client and dnstt-server.
+
+
+## v0.20200506.0
+
+Documentation updates.
+
+
 ## v0.20200504.0
 
 Documentation updates and link to web page.
