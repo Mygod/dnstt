@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/flynn/noise"
+	"golang.org/x/crypto/curve25519"
 )
 
 // The length of public and private keys as returned by GenerateKeypair.
@@ -231,14 +232,11 @@ func GenerateKeypair() (privkey, pubkey []byte, err error) {
 
 // PubkeyFromPrivkey returns the public key that corresponds to privkey.
 func PubkeyFromPrivkey(privkey []byte) []byte {
-	pair, err := noise.DH25519.GenerateKeypair(bytes.NewReader(privkey))
+	pubkey, err := curve25519.X25519(privkey, curve25519.Basepoint)
 	if err != nil {
 		panic(err)
 	}
-	if !bytes.Equal(pair.Private, privkey) {
-		panic("privkey was not as expected")
-	}
-	return pair.Public
+	return pubkey
 }
 
 // ReadKey reads a hex-encoded key from r. r must consist of a single line, with
