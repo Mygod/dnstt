@@ -195,7 +195,7 @@ func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.R
 		return nil, err
 	}
 	if len(payload) != 0 {
-		return nil, errors.New("unexpected server payload")
+		return nil, errors.New("unexpected client payload")
 	}
 
 	// <- e, es
