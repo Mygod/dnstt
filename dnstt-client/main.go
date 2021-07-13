@@ -96,7 +96,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 			err = nil
 		}
 		if err != nil {
-			log.Printf("stream %08x:%d copy stream←local: %v\n", conv, stream.ID(), err)
+			log.Printf("stream %08x:%d copy stream←local: %v", conv, stream.ID(), err)
 		}
 		local.CloseRead()
 		stream.Close()
@@ -109,7 +109,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 			err = nil
 		}
 		if err != nil && err != io.ErrClosedPipe {
-			log.Printf("stream %08x:%d copy local←stream: %v\n", conv, stream.ID(), err)
+			log.Printf("stream %08x:%d copy local←stream: %v", conv, stream.ID(), err)
 		}
 		local.CloseWrite()
 	}()
@@ -131,7 +131,7 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	if mtu < 80 {
 		return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
 	}
-	log.Printf("effective MTU %d\n", mtu)
+	log.Printf("effective MTU %d", mtu)
 
 	// Open a KCP conn on the PacketConn.
 	conn, err := kcp.NewConn2(remoteAddr, nil, 0, 0, pconn)
@@ -145,8 +145,8 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	log.Printf("begin session %08x", conn.GetConv())
 	// Permit coalescing the payloads of consecutive sends.
 	conn.SetStreamMode(true)
-	// Disable the dynamic congestion window (limit only by the
-	// maximum of local and remote static windows).
+	// Disable the dynamic congestion window (limit only by the maximum of
+	// local and remote static windows).
 	conn.SetNoDelay(
 		0, // default nodelay
 		0, // default interval
@@ -185,7 +185,7 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 			defer local.Close()
 			err := handle(local.(*net.TCPConn), sess, conn.GetConv())
 			if err != nil {
-				log.Printf("handle: %v\n", err)
+				log.Printf("handle: %v", err)
 			}
 		}()
 	}

@@ -6,7 +6,7 @@
 //
 // Example:
 //     dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
-//     dnstt-server -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+//     dnstt-server -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
 //
 // To generate a persistent server private key, first run with the -gen-key
 // option. By default the generated private and public keys are printed to
@@ -23,7 +23,7 @@
 // queries.
 //
 // The -mtu option controls the maximum size of response UDP payloads.
-// Queries that do not advertise requestor support for responses of at least
+// Queries that do not advertise requester support for responses of at least
 // this size at least this size will be responded to with a FORMERR. The default
 // value is maxUDPPayload.
 //
@@ -71,6 +71,9 @@ const (
 	// to be the query timeout of the Quad9 DoH server.
 	// https://dnsencryption.info/imc19-doe.html Section 4.2, Finding 2.4
 	maxResponseDelay = 1 * time.Second
+
+	// How long to wait for a TCP connection to upstream to be established.
+	upstreamDialTimeout = 30 * time.Second
 )
 
 var (
@@ -181,39 +184,43 @@ func readKeyFromFile(filename string) ([]byte, error) {
 
 // handleStream bidirectionally connects a client stream with a TCP socket
 // addressed by upstream.
-func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error {
-	conn, err := net.DialTCP("tcp", nil, upstream)
+func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
+	dialer := net.Dialer{
+		Timeout: upstreamDialTimeout,
+	}
+	upstreamConn, err := dialer.Dial("tcp", upstream)
 	if err != nil {
 		return fmt.Errorf("stream %08x:%d connect upstream: %v", conv, stream.ID(), err)
 	}
-	defer conn.Close()
+	defer upstreamConn.Close()
+	upstreamTCPConn := upstreamConn.(*net.TCPConn)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err := io.Copy(stream, conn)
+		_, err := io.Copy(stream, upstreamTCPConn)
 		if err == io.EOF {
 			// smux Stream.Write may return io.EOF.
 			err = nil
 		}
 		if err != nil {
-			log.Printf("stream %08x:%d copy stream←upstream: %v\n", conv, stream.ID(), err)
+			log.Printf("stream %08x:%d copy stream←upstream: %v", conv, stream.ID(), err)
 		}
-		conn.CloseRead()
+		upstreamTCPConn.CloseRead()
 		stream.Close()
 	}()
 	go func() {
 		defer wg.Done()
-		_, err := io.Copy(conn, stream)
+		_, err := io.Copy(upstreamTCPConn, stream)
 		if err == io.EOF {
 			// smux Stream.WriteTo may return io.EOF.
 			err = nil
 		}
 		if err != nil && err != io.ErrClosedPipe {
-			log.Printf("stream %08x:%d copy upstream←stream: %v\n", conv, stream.ID(), err)
+			log.Printf("stream %08x:%d copy upstream←stream: %v", conv, stream.ID(), err)
 		}
-		conn.CloseWrite()
+		upstreamTCPConn.CloseWrite()
 	}()
 	wg.Wait()
 
@@ -222,7 +229,7 @@ func handleStream(stream *smux.Stream, upstream *net.TCPAddr, conv uint32) error
 
 // acceptStreams wraps a KCP session in a Noise channel and an smux.Session,
 // then awaits smux streams. It passes each stream to handleStream.
-func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.TCPAddr) error {
+func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream string) error {
 	// Put a Noise channel on top of the KCP conn.
 	rw, err := noise.NewServer(conn, privkey, pubkey)
 	if err != nil {
@@ -237,6 +244,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 	if err != nil {
 		return err
 	}
+	defer sess.Close()
 
 	for {
 		stream, err := sess.AcceptStream()
@@ -254,7 +262,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 			}()
 			err := handleStream(stream, upstream, conn.GetConv())
 			if err != nil {
-				log.Printf("stream %08x:%d handleStream: %v\n", conn.GetConv(), stream.ID(), err)
+				log.Printf("stream %08x:%d handleStream: %v", conn.GetConv(), stream.ID(), err)
 			}
 		}()
 	}
@@ -262,7 +270,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream *net.T
 
 // acceptSessions listens for incoming KCP connections and passes them to
 // acceptStreams.
-func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream *net.TCPAddr) error {
+func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream string) error {
 	for {
 		conn, err := ln.AcceptKCP()
 		if err != nil {
@@ -292,7 +300,7 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream 
 			}()
 			err := acceptStreams(conn, privkey, pubkey, upstream)
 			if err != nil {
-				log.Printf("session %08x acceptStreams: %v\n", conn.GetConv(), err)
+				log.Printf("session %08x acceptStreams: %v", conn.GetConv(), err)
 			}
 		}()
 	}
@@ -353,10 +361,10 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	}
 
 	// Check for EDNS(0) support. Include our own OPT RR only if we receive
-	// one from the requestor.
+	// one from the requester.
 	// https://tools.ietf.org/html/rfc6891#section-6.1.1
 	// "Lack of presence of an OPT record in a request MUST be taken as an
-	// indication that the requestor does not implement any part of this
+	// indication that the requester does not implement any part of this
 	// specification and that the responder MUST NOT include an OPT record
 	// in its response."
 	payloadSize := 0
@@ -406,7 +414,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	// There must be exactly one question.
 	if len(query.Question) != 1 {
 		resp.Flags |= dns.RcodeFormatError
-		log.Printf("FORMERR: too many questions (%d)", len(query.Question))
+		log.Printf("FORMERR: too few or too many questions (%d)", len(query.Question))
 		return resp, nil
 	}
 	question := query.Question[0]
@@ -460,7 +468,7 @@ func responseFor(query *dns.Message, domain dns.Name) (*dns.Message, []byte) {
 	// FORMERR MUST be returned."
 	if payloadSize < maxUDPPayload {
 		resp.Flags |= dns.RcodeFormatError
-		log.Printf("FORMERR: requestor payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
+		log.Printf("FORMERR: requester payload size %d is too small (minimum %d)", payloadSize, maxUDPPayload)
 		return resp, nil
 	}
 
@@ -699,7 +707,7 @@ func computeMaxEncodedPayload(limit int) int {
 			{
 				Name:  dns.Name{},
 				Type:  dns.RRTypeOPT,
-				Class: queryLimit, // requestor's UDP payload size
+				Class: queryLimit, // requester's UDP payload size
 				TTL:   0,          // extended RCODE and flags
 				Data:  []byte{},
 			},
@@ -738,7 +746,7 @@ func computeMaxEncodedPayload(limit int) int {
 	return low
 }
 
-func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net.PacketConn) error {
+func run(privkey, pubkey []byte, domain dns.Name, upstream string, dnsConn net.PacketConn) error {
 	defer dnsConn.Close()
 
 	log.Printf("pubkey %x", pubkey)
@@ -759,7 +767,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 		}
 		return fmt.Errorf("maximum UDP payload size of %d leaves only %d bytes for payload", maxUDPPayload, mtu)
 	}
-	log.Printf("effective MTU %d\n", mtu)
+	log.Printf("effective MTU %d", mtu)
 
 	// Start up the virtual PacketConn for turbotunnel.
 	ttConn := turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, idleTimeout*2)
@@ -769,9 +777,9 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream net.Addr, dnsConn net
 	}
 	defer ln.Close()
 	go func() {
-		err := acceptSessions(ln, privkey, pubkey, mtu, upstream.(*net.TCPAddr))
+		err := acceptSessions(ln, privkey, pubkey, mtu, upstream)
 		if err != nil {
-			log.Printf("acceptSessions: %v\n", err)
+			log.Printf("acceptSessions: %v", err)
 		}
 	}()
 
@@ -805,7 +813,7 @@ func main() {
 
 Example:
   %[1]s -gen-key -privkey-file server.key -pubkey-file server.pub
-  %[1]s -udp 127.0.0.1:5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+  %[1]s -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
 
 `, os.Args[0])
 		flag.PrintDefaults()
@@ -841,10 +849,34 @@ Example:
 			fmt.Fprintf(os.Stderr, "invalid domain %+q: %v\n", flag.Arg(0), err)
 			os.Exit(1)
 		}
-		upstream, err := net.ResolveTCPAddr("tcp", flag.Arg(1))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "cannot resolve %+q: %v\n", flag.Arg(1), err)
-			os.Exit(1)
+		upstream := flag.Arg(1)
+		// We keep upstream as a string in order to eventually pass it
+		// to net.Dial in handleStream. But for the sake of displaying
+		// an error or warning at startup, rather than only when the
+		// first stream occurs, we apply some parsing and name
+		// resolution checks here.
+		{
+			upstreamHost, _, err := net.SplitHostPort(upstream)
+			if err != nil {
+				// host:port format is required in all cases, so
+				// this is a fatal error.
+				fmt.Fprintf(os.Stderr, "cannot parse upstream address %+q: %v\n", upstream, err)
+				os.Exit(1)
+			}
+			upstreamIPAddr, err := net.ResolveIPAddr("ip", upstreamHost)
+			if err != nil {
+				// Failure to resolve the host portion is only a
+				// warning. The name will be re-resolved on each
+				// net.Dial in handleStream.
+				log.Printf("warning: cannot resolve upstream host %+q: %v", upstreamHost, err)
+			} else if upstreamIPAddr.IP == nil {
+				// Handle the special case of an empty string
+				// for the host portion, which resolves to a nil
+				// IP. This is a fatal error as we will not be
+				// able to dial this address.
+				fmt.Fprintf(os.Stderr, "cannot parse upstream address %+q: missing host in address\n", upstream)
+				os.Exit(1)
+			}
 		}
 
 		if udpAddr == "" {

@@ -8,16 +8,19 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
+
+const dialTimeout = 30 * time.Second
 
 // TLSPacketConn is a TLS- and TCP-based transport for DNS messages, used for
 // DNS over TLS (DoT). Its WriteTo and ReadFrom methods exchange DNS messages
 // over a TLS channel, prefixing each message with a two-octet length field as
 // in DNS over TCP.
 //
-// TLSPacketConn deals only with alreaday formatted DNS messages. It does not
+// TLSPacketConn deals only with already formatted DNS messages. It does not
 // handle encoding information into the messages. That is rather the
 // responsibility of DNSPacketConn.
 //
@@ -41,8 +44,11 @@ func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 	// becomes disconnected. We do the first dial here, outside the
 	// goroutine, so that any immediate and permanent connection errors are
 	// reported directly to the caller of NewTLSPacketConn.
+	dialer := &net.Dialer{
+		Timeout: dialTimeout,
+	}
 	tlsConfig := &tls.Config{}
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +75,7 @@ func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 			conn.Close()
 
 			// Whenever the TLS connection dies, redial a new one.
-			conn, err = tls.Dial("tcp", addr, tlsConfig)
+			conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 			if err != nil {
 				log.Printf("tls.Dial: %v", err)
 				break

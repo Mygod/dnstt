@@ -101,7 +101,6 @@ func ParseName(s string) (Name, error) {
 	} else {
 		return NewName(bytes.Split(b, []byte(".")))
 	}
-	return NewName(bytes.Split(b, []byte(".")))
 }
 
 // String returns a string representation of name, with labels separated by
@@ -179,7 +178,7 @@ type RR struct {
 }
 
 // readName parses a DNS name from r. It leaves r positioned just after the
-// parsed named.
+// parsed name.
 func readName(r io.ReadSeeker) (Name, error) {
 	var labels [][]byte
 	// We limit the number of compression pointers we are willing to follow.

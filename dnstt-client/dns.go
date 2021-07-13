@@ -307,7 +307,7 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 			{
 				Name:  dns.Name{},
 				Type:  dns.RRTypeOPT,
-				Class: 4096, // requestor's UDP payload size
+				Class: 4096, // requester's UDP payload size
 				TTL:   0,    // extended RCODE and flags
 				Data:  []byte{},
 			},

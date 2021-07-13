@@ -26,7 +26,7 @@ var httpClient = &http.Client{Timeout: 1 * time.Minute}
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
 // requests and responses.
 //
-// HTTPPacketConn deals only with alreaday formatted DNS messages. It does not
+// HTTPPacketConn deals only with already formatted DNS messages. It does not
 // handle encoding information into the messages. That is rather the
 // responsibility of DNSPacketConn.
 //
@@ -98,7 +98,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	default:
 		// We primarily are thinking of 429 Too Many Requests here, but
 		// any other unexpected response codes will also cause us to
-		// rate-limit ourself and emit a log message.
+		// rate-limit ourselves and emit a log message.
 		// https://developers.google.com/speed/public-dns/docs/doh/#errors
 		now := time.Now()
 		var retryAfter time.Time
