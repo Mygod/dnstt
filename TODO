@@ -13,3 +13,5 @@ instantiations of sendLoop.
 Add support for DNS over QUIC
 https://dnsprivacy.org/wiki/display/DP/DNS+Privacy+Public+Resolvers#DNSPrivacyPublicResolvers-DNS-over-QUIC(DoQ)
 https://github.com/AdguardTeam/dnsproxy/blob/660a2da99eb6cc2cf5db9a54f1374dd58fbb5b26/upstream/upstream_quic.go
+
+Use uTLS for TLS camouflage
