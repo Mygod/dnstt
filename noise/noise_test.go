@@ -105,10 +105,11 @@ func TestReadKey(t *testing.T) {
 }
 
 func TestUnexpectedPayload(t *testing.T) {
-	privkey, pubkey, err := GenerateKeypair()
+	privkey, err := GeneratePrivkey()
 	if err != nil {
 		panic(err)
 	}
+	pubkey := PubkeyFromPrivkey(privkey)
 
 	// Test the client sending an unexpected payload.
 	clientWithPayload := func(rwc io.ReadWriteCloser) error {

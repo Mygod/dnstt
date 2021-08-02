@@ -118,10 +118,11 @@ func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
 		}
 	}()
 
-	privkey, pubkey, err := noise.GenerateKeypair()
+	privkey, err := noise.GeneratePrivkey()
 	if err != nil {
 		return err
 	}
+	pubkey := noise.PubkeyFromPrivkey(privkey)
 
 	if privkeyFilename != "" {
 		// Save the privkey to a file.
@@ -917,7 +918,7 @@ Example:
 			log.Println("generating a temporary one-time keypair")
 			log.Println("use the -privkey or -privkey-file option for a persistent server keypair")
 			var err error
-			privkey, _, err = noise.GenerateKeypair()
+			privkey, err = noise.GeneratePrivkey()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)

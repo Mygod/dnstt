@@ -7,7 +7,6 @@ package noise
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
@@ -20,7 +19,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// The length of public and private keys as returned by GenerateKeypair.
+// The length of public and private keys as returned by GeneratePrivkey.
 const KeyLen = 32
 
 // cipherSuite represents 25519_ChaChaPoly_BLAKE2s.
@@ -215,23 +214,11 @@ func NewServer(rwc io.ReadWriteCloser, serverPrivkey []byte) (io.ReadWriteCloser
 	return newSocket(rwc, recvCipher, sendCipher), nil
 }
 
-// GenerateKeypair generates a private key and the corresponding public key.
-//
-// https://noiseprotocol.org/noise.html#dh-functions
-func GenerateKeypair() (privkey, pubkey []byte, err error) {
+// GeneratePrivkey generates a private key. The corresponding public key can be
+// derived using PubkeyFromPrivkey.
+func GeneratePrivkey() ([]byte, error) {
 	pair, err := noise.DH25519.GenerateKeypair(rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// pair.Public is already filled in; assert here that PubkeyFromPrivkey
-	// agrees with it.
-	derivedPubkey := PubkeyFromPrivkey(pair.Private)
-	if !bytes.Equal(derivedPubkey, pair.Public) {
-		panic(fmt.Sprintf("expected pubkey %x, got %x", derivedPubkey, pair.Public))
-	}
-
-	return pair.Private, pair.Public, nil
+	return pair.Private, err
 }
 
 // PubkeyFromPrivkey returns the public key that corresponds to privkey.
