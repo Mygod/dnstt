@@ -177,10 +177,13 @@ func NewClient(rwc io.ReadWriteCloser, serverPubkey []byte) (io.ReadWriteCloser,
 // NewClient wraps an io.ReadWriteCloser in a Noise protocol as a server, and
 // returns after completing the handshake. It returns a non-nil error if there
 // is an error during the handshake.
-func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.ReadWriteCloser, error) {
+func NewServer(rwc io.ReadWriteCloser, serverPrivkey []byte) (io.ReadWriteCloser, error) {
 	config := newConfig()
 	config.Initiator = false
-	config.StaticKeypair = noise.DHKey{Private: serverPrivkey, Public: serverPubkey}
+	config.StaticKeypair = noise.DHKey{
+		Private: serverPrivkey,
+		Public:  PubkeyFromPrivkey(serverPrivkey),
+	}
 	handshakeState, err := noise.NewHandshakeState(config)
 	if err != nil {
 		return nil, err

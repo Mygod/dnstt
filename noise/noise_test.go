@@ -158,7 +158,7 @@ func TestUnexpectedPayload(t *testing.T) {
 			}
 		}()
 
-		server, err := NewServer(s, privkey, pubkey)
+		server, err := NewServer(s, privkey)
 		if err == nil || err.Error() != "unexpected client payload" || server != nil {
 			t.Errorf("NewServer got (%T, %v)", server, err)
 		}
