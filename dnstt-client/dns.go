@@ -339,19 +339,17 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 	pollTimer := time.NewTimer(pollDelay)
 	for {
 		var p []byte
-		outgoingQueue := c.QueuePacketConn.OutgoingQueue(addr)
+		outgoing := c.QueuePacketConn.OutgoingQueue(addr)
 		pollTimerExpired := false
-		// Prioritize sending an actual data packet from OutgoingQueue.
-		// Only consider a poll when OutgoingQueue is empty.
+		// Prioritize sending an actual data packet from outgoing. Only
+		// consider a poll when outgoing is empty.
 		select {
-		case p = <-outgoingQueue:
+		case p = <-outgoing:
 		default:
 			select {
-			case p = <-outgoingQueue:
+			case p = <-outgoing:
 			case <-c.pollChan:
-				p = nil
 			case <-pollTimer.C:
-				p = nil
 				pollTimerExpired = true
 			}
 		}
