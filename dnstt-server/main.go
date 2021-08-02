@@ -587,24 +587,26 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			timer := time.NewTimer(maxResponseDelay)
 			for {
 				var p []byte
+				unstash := ttConn.Unstash(rec.ClientID)
+				outgoing := ttConn.OutgoingQueue(rec.ClientID)
+				// Prioritize taking a packet first from the
+				// stash, then from the outgoing queue, then
+				// finally check for the expiration of the timer
+				// or for a receive on ch (indicating a new
+				// query that we must respond to).
 				select {
-				// Check the nextRec, timer, and stash cases
-				// before considering the OutgoingQueue case.
-				// Only if all these cases fail do we enter the
-				// default arm, where they are checked again in
-				// addition to OutgoingQueue.
-				case nextRec = <-ch:
-					// If there's another response waiting
-					// to be sent, wait no longer for a
-					// payload for this one.
-				case <-timer.C:
-				case p = <-ttConn.Unstash(rec.ClientID):
+				case p = <-unstash:
 				default:
 					select {
-					case nextRec = <-ch:
-					case <-timer.C:
-					case p = <-ttConn.Unstash(rec.ClientID):
-					case p = <-ttConn.OutgoingQueue(rec.ClientID):
+					case p = <-unstash:
+					case p = <-outgoing:
+					default:
+						select {
+						case p = <-unstash:
+						case p = <-outgoing:
+						case <-timer.C:
+						case nextRec = <-ch:
+						}
 					}
 				}
 				// We wait for the first packet in a bundle
