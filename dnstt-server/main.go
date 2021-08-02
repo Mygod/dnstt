@@ -585,7 +585,6 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			// overflow the capacity of the DNS response, we stash
 			// to be bundled into a future response.
 			timer := time.NewTimer(maxResponseDelay)
-		loop:
 			for {
 				var p []byte
 				select {
@@ -598,16 +597,12 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 					// If there's another response waiting
 					// to be sent, wait no longer for a
 					// payload for this one.
-					break loop
 				case <-timer.C:
-					break loop
 				case p = <-ttConn.Unstash(rec.ClientID):
 				default:
 					select {
 					case nextRec = <-ch:
-						break loop
 					case <-timer.C:
-						break loop
 					case p = <-ttConn.Unstash(rec.ClientID):
 					case p = <-ttConn.OutgoingQueue(rec.ClientID):
 					}
@@ -617,6 +612,12 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 				// immediately available or they will be omitted
 				// from this bundle.
 				timer.Reset(0)
+
+				if len(p) == 0 {
+					// timer expired or receive on ch, we
+					// are done with this response.
+					break
+				}
 
 				limit -= 2 + len(p)
 				if payload.Len() == 0 {
@@ -628,7 +629,7 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 					// Stash this packet to send in the next
 					// response.
 					ttConn.Stash(p, rec.ClientID)
-					break loop
+					break
 				}
 				if int(uint16(len(p))) != len(p) {
 					panic(len(p))
