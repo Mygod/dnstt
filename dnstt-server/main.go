@@ -300,6 +300,10 @@ func acceptSessions(ln *kcp.Listener, privkey []byte, mtu int, upstream string) 
 				conn.Close()
 			}()
 			err := acceptStreams(conn, privkey, upstream)
+			if err == io.ErrClosedPipe {
+				// We don't want to report this error.
+				err = nil
+			}
 			if err != nil {
 				log.Printf("session %08x acceptStreams: %v", conn.GetConv(), err)
 			}
