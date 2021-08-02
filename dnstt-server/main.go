@@ -57,7 +57,7 @@ import (
 
 const (
 	// smux streams will be closed after this much time without receiving data.
-	idleTimeout = 10 * time.Minute
+	idleTimeout = 2 * time.Minute
 
 	// How to set the TTL field in Answer resource records.
 	responseTTL = 60

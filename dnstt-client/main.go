@@ -43,7 +43,7 @@ import (
 )
 
 // smux streams will be closed after this much time without receiving data.
-const idleTimeout = 10 * time.Minute
+const idleTimeout = 2 * time.Minute
 
 // dnsNameCapacity returns the number of bytes remaining for encoded data after
 // including domain in a DNS name.
