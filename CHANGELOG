@@ -1,3 +1,17 @@
+## v1.20210803.0
+
+Performance tuning. Enlarge some buffers and network receive windows to
+permit faster downloads in some configurations. Adjusted the dynamic
+polling model to work more as intended, and tweaked the server send loop
+to continue bundling outgoing packets as long as some are immediately
+available.
+
+Reduce idle timeout from 10 minutes to 2 minutes. Terminated sessions
+will be reclaimed more quickly.
+
+Documentation updates.
+
+
 ## v0.20210424.0
 
 dnstt was part of a software security audit done by Cure53. The report
