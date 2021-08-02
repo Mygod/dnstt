@@ -128,11 +128,10 @@ func (s *socket) Write(p []byte) (int, error) {
 
 // newConfig instantiates configuration settings that are common to clients and
 // servers.
-func newConfig(initiator bool) noise.Config {
+func newConfig() noise.Config {
 	return noise.Config{
 		CipherSuite: cipherSuite,
 		Pattern:     noise.HandshakeNK,
-		Initiator:   initiator,
 		Prologue:    []byte("dnstt 2020-04-13"),
 	}
 }
@@ -141,7 +140,8 @@ func newConfig(initiator bool) noise.Config {
 // returns after completing the handshake. It returns a non-nil error if there
 // is an error during the handshake.
 func NewClient(rwc io.ReadWriteCloser, serverPubkey []byte) (io.ReadWriteCloser, error) {
-	config := newConfig(true)
+	config := newConfig()
+	config.Initiator = true
 	config.PeerStatic = serverPubkey
 	handshakeState, err := noise.NewHandshakeState(config)
 	if err != nil {
@@ -178,7 +178,8 @@ func NewClient(rwc io.ReadWriteCloser, serverPubkey []byte) (io.ReadWriteCloser,
 // returns after completing the handshake. It returns a non-nil error if there
 // is an error during the handshake.
 func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.ReadWriteCloser, error) {
-	config := newConfig(false)
+	config := newConfig()
+	config.Initiator = false
 	config.StaticKeypair = noise.DHKey{Private: serverPrivkey, Public: serverPubkey}
 	handshakeState, err := noise.NewHandshakeState(config)
 	if err != nil {

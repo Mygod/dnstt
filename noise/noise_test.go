@@ -112,7 +112,8 @@ func TestUnexpectedPayload(t *testing.T) {
 
 	// Test the client sending an unexpected payload.
 	clientWithPayload := func(rwc io.ReadWriteCloser) error {
-		config := newConfig(true)
+		config := newConfig()
+		config.Initiator = true
 		config.PeerStatic = pubkey
 		handshakeState, err := noise.NewHandshakeState(config)
 		if err != nil {
@@ -165,7 +166,8 @@ func TestUnexpectedPayload(t *testing.T) {
 
 	// Test the server sending an unexpected payload.
 	serverWithPayload := func(rwc io.ReadWriteCloser) error {
-		config := newConfig(false)
+		config := newConfig()
+		config.Initiator = false
 		config.StaticKeypair = noise.DHKey{Private: privkey, Public: pubkey}
 		handshakeState, err := noise.NewHandshakeState(config)
 		if err != nil {
