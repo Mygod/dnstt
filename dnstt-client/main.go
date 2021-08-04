@@ -26,6 +26,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -95,7 +96,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 			// smux Stream.Write may return io.EOF.
 			err = nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy stream←local: %v", conv, stream.ID(), err)
 		}
 		local.CloseRead()
@@ -108,7 +109,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 			// smux Stream.WriteTo may return io.EOF.
 			err = nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy local←stream: %v", conv, stream.ID(), err)
 		}
 		local.CloseWrite()

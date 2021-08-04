@@ -1,6 +1,6 @@
 module www.bamsoftware.com/git/dnstt.git
 
-go 1.11
+go 1.13
 
 require (
 	github.com/flynn/noise v1.0.0

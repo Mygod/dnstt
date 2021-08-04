@@ -38,6 +38,7 @@ import (
 	"bytes"
 	"encoding/base32"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -205,7 +206,7 @@ func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
 			// smux Stream.Write may return io.EOF.
 			err = nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy stream←upstream: %v", conv, stream.ID(), err)
 		}
 		upstreamTCPConn.CloseRead()
@@ -218,7 +219,7 @@ func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
 			// smux Stream.WriteTo may return io.EOF.
 			err = nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy upstream←stream: %v", conv, stream.ID(), err)
 		}
 		upstreamTCPConn.CloseWrite()
@@ -302,11 +303,7 @@ func acceptSessions(ln *kcp.Listener, privkey []byte, mtu int, upstream string) 
 				conn.Close()
 			}()
 			err := acceptStreams(conn, privkey, upstream)
-			if err == io.ErrClosedPipe {
-				// We don't want to report this error.
-				err = nil
-			}
-			if err != nil {
+			if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 				log.Printf("session %08x acceptStreams: %v", conn.GetConv(), err)
 			}
 		}()
