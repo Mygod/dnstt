@@ -205,7 +205,7 @@ func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
 			// smux Stream.Write may return io.EOF.
 			err = nil
 		}
-		if err != nil {
+		if err != nil && err != io.ErrClosedPipe {
 			log.Printf("stream %08x:%d copy stream←upstream: %v", conv, stream.ID(), err)
 		}
 		upstreamTCPConn.CloseRead()
