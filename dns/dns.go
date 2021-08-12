@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 )
 
 // The maximum number of DNS name compression pointers we are willing to follow.
@@ -103,14 +105,31 @@ func ParseName(s string) (Name, error) {
 	}
 }
 
-// String returns a string representation of name, with labels separated by
-// dots.
+// String returns a reversible string representation of name. Labels are
+// separated by dots, and any bytes in a label that are outside the set
+// [0-9A-Za-z-] are replaced with a \xXX hex escape sequence.
 func (name Name) String() string {
 	if len(name) == 0 {
 		return "."
-	} else {
-		return string(bytes.Join(name, []byte(".")))
 	}
+
+	var buf strings.Builder
+	for i, label := range name {
+		if i > 0 {
+			buf.WriteByte('.')
+		}
+		for _, b := range label {
+			if b == '-' ||
+				('0' <= b && b <= '9') ||
+				('A' <= b && b <= 'Z') ||
+				('a' <= b && b <= 'z') {
+				buf.WriteByte(b)
+			} else {
+				fmt.Fprintf(&buf, "\\x%02x", b)
+			}
+		}
+	}
+	return buf.String()
 }
 
 // TrimSuffix returns a Name with the given suffix removed, if it was present.

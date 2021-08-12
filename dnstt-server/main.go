@@ -692,9 +692,17 @@ func computeMaxEncodedPayload(limit int) int {
 	if err != nil {
 		panic(err)
 	}
-	if len(maxLengthName.String())+2 != 255 {
-		panic(fmt.Sprintf("max-length name is %d octets, should be %d %s",
-			len(maxLengthName.String())+2, 255, maxLengthName))
+	{
+		// Compute the encoded length of maxLengthName and that its
+		// length is actually at the maximum of 255 octets.
+		n := 0
+		for _, label := range maxLengthName {
+			n += len(label) + 1
+		}
+		n += 1 // For the terminating null label.
+		if n != 255 {
+			panic(fmt.Sprintf("max-length name is %d octets, should be %d %s", n, 255, maxLengthName))
+		}
 	}
 
 	queryLimit := uint16(limit)
