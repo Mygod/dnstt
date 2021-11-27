@@ -68,7 +68,7 @@ const (
 type Name [][]byte
 
 // NewName returns a Name from a slice of labels, after checking the labels for
-// validity. Do not include a zero-length label at the end of the slice.
+// validity. Does not include a zero-length label at the end of the slice.
 func NewName(labels [][]byte) (Name, error) {
 	name := Name(labels)
 	// https://tools.ietf.org/html/rfc1035#section-2.3.4
@@ -176,7 +176,7 @@ func (msg *Message) Rcode() uint16 {
 	return msg.Flags & 0x000f
 }
 
-// Question represents the question section of a message.
+// Question represents an entry in the question section of a message.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.2
 type Question struct {
