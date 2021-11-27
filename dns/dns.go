@@ -165,15 +165,15 @@ type Message struct {
 // Opcode extracts the OPCODE part of the Flags field.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.1
-func (msg *Message) Opcode() uint16 {
-	return (msg.Flags >> 11) & 0xf
+func (message *Message) Opcode() uint16 {
+	return (message.Flags >> 11) & 0xf
 }
 
 // Rcode extracts the RCODE part of the Flags field.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.1
-func (msg *Message) Rcode() uint16 {
-	return msg.Flags & 0x000f
+func (message *Message) Rcode() uint16 {
+	return message.Flags & 0x000f
 }
 
 // Question represents an entry in the question section of a message.
