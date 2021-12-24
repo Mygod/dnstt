@@ -37,9 +37,6 @@ type TLSPacketConn struct {
 // the resolver, reconnecting as necessary. It closes the connection if any
 // reconnection attempt fails.
 func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
-	c := &TLSPacketConn{
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
-	}
 	// We maintain one TLS connection at a time, redialing it whenever it
 	// becomes disconnected. We do the first dial here, outside the
 	// goroutine, so that any immediate and permanent connection errors are
@@ -51,6 +48,9 @@ func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
 		return nil, err
+	}
+	c := &TLSPacketConn{
+		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
 	}
 	go func() {
 		defer c.Close()
