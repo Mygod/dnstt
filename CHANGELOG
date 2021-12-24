@@ -1,3 +1,10 @@
+-doh and -dot mode use uTLS to camouflage their TLS Client Hello
+fingerprint. This change means that it is no longer possible to use a
+proxy in -doh mode by setting the HTTP_PROXY or HTTPS_PROXY environment
+variables; this was an undocumented side effect of using the Go net/http
+package with no TLS camouflage.
+
+
 ## v1.20210812.0
 
 Fixed an injection vulnerability in the dnstt-server log message

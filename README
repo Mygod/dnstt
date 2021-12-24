@@ -283,12 +283,8 @@ see anything that the tunnel server forwards to some other host (if the
 tunnel server is acting as a proxy, for example), unless that data has
 been separately encrypted before being sent through the tunnel.
 
-The dnstt client does not do anything special to disguise its TLS
-fingerprint. It uses the crypto/tls package from Go, and its TLS
-fingerprint will depend on what version of Go it was compiled with. You
-should assume that the DNS tunnel client is identifiable by TLS
-fingerprint. A path to hiding the TLS fingerprint would be to integrate
-uTLS (https://github.com/refraction-networking/utls).
+dnstt-client disguises its TLS fingerprint using uTLS
+(https://github.com/refraction-networking/utls).
 
 
 ## Encryption and authentication

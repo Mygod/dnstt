@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"crypto/tls"
+	"context"
 	"encoding/binary"
 	"io"
 	"log"
@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	utls "github.com/refraction-networking/utls"
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
@@ -37,15 +38,16 @@ type TLSPacketConn struct {
 // the resolver, reconnecting as necessary. It closes the connection if any
 // reconnection attempt fails.
 func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
+	dial := func() (*utls.UConn, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+		defer cancel()
+		return utlsDialContext(ctx, "tcp", addr, nil, utlsClientHelloID)
+	}
 	// We maintain one TLS connection at a time, redialing it whenever it
 	// becomes disconnected. We do the first dial here, outside the
 	// goroutine, so that any immediate and permanent connection errors are
 	// reported directly to the caller of NewTLSPacketConn.
-	dialer := &net.Dialer{
-		Timeout: dialTimeout,
-	}
-	tlsConfig := &tls.Config{}
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	conn, err := dial()
 	if err != nil {
 		return nil, err
 	}
@@ -75,9 +77,9 @@ func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
 			conn.Close()
 
 			// Whenever the TLS connection dies, redial a new one.
-			conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+			conn, err = dial()
 			if err != nil {
-				log.Printf("tls.Dial: %v", err)
+				log.Printf("dial tls: %v", err)
 				break
 			}
 		}

@@ -36,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	utls "github.com/refraction-networking/utls"
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/smux"
 	"www.bamsoftware.com/git/dnstt.git/dns"
@@ -45,6 +46,9 @@ import (
 
 // smux streams will be closed after this much time without receiving data.
 const idleTimeout = 2 * time.Minute
+
+// uTLS Client Hello fingerprint to use in all TLS connections.
+var utlsClientHelloID = &utls.HelloFirefox_Auto
 
 // dnsNameCapacity returns the number of bytes remaining for encoded data after
 // including domain in a DNS name.

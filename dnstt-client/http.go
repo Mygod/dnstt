@@ -19,8 +19,11 @@ import (
 const defaultRetryAfter = 10 * time.Second
 
 // The *http.Client shared by instances of HTTPPacketConn. We use this instead
-// of http.DefaultClient in order to set a timeout.
-var httpClient = &http.Client{Timeout: 1 * time.Minute}
+// of http.DefaultClient in order to set a timeout and a uTLS fingerprint.
+var httpClient = &http.Client{
+	Transport: NewUTLSRoundTripper(nil, utlsClientHelloID),
+	Timeout:   1 * time.Minute,
+}
 
 // HTTPPacketConn is an HTTP-based transport for DNS messages, used for DNS over
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
