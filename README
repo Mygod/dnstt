@@ -295,7 +295,9 @@ $ ./dnstt-client -utls '3*Firefox,2*Chrome,1*iOS' ...
 $ ./dnstt-client -utls Firefox ...
 ```
 Run `./dnstt-client -help` to see the available fingerprint names and
-the default distribution.
+the default distribution. The special value `none` disables uTLS and
+uses the native crypto/tls fingerprint, which is less covert but likely
+to be compatible with more servers.
 
 
 ## Encryption and authentication

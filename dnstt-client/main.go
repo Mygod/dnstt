@@ -25,21 +25,24 @@
 // them over the tunnel.
 //
 // In -doh and -dot modes, the program's TLS fingerprint is camouflaged with
-// uTLS. By default, the specific TLS fingerprint is selected randomly from a
+// uTLS by default. The specific TLS fingerprint is selected randomly from a
 // weighted distribution. You can set your own distribution (or specific single
-// fingerprint) using the -utls option:
+// fingerprint) using the -utls option. The special value "none" disables uTLS.
 //     -utls '3*Firefox,2*Chrome,1*iOS'
 //     -utls Firefox
+//     -utls none
 package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -97,9 +100,14 @@ func sampleUTLSDistribution(spec string) (*utls.ClientHelloID, error) {
 	}
 	ids := make([]*utls.ClientHelloID, 0, len(labels))
 	for _, label := range labels {
-		id := utlsLookup(label)
-		if id == nil {
-			return nil, fmt.Errorf("unknown TLS fingerprint %q", label)
+		var id *utls.ClientHelloID
+		if label == "none" {
+			id = nil
+		} else {
+			id = utlsLookup(label)
+			if id == nil {
+				return nil, fmt.Errorf("unknown TLS fingerprint %q", label)
+			}
 		}
 		ids = append(ids, id)
 	}
@@ -243,6 +251,7 @@ Examples:
 `, os.Args[0])
 		flag.PrintDefaults()
 		labels := make([]string, 0, len(utlsClientHelloIDMap))
+		labels = append(labels, "none")
 		for _, entry := range utlsClientHelloIDMap {
 			labels = append(labels, entry.Label)
 		}
@@ -319,7 +328,9 @@ Known TLS fingerprints for -utls are:
 		fmt.Fprintf(os.Stderr, "parsing -utls: %v\n", err)
 		os.Exit(1)
 	}
-	log.Printf("uTLS fingerprint %s %s", utlsClientHelloID.Client, utlsClientHelloID.Version)
+	if utlsClientHelloID != nil {
+		log.Printf("uTLS fingerprint %s %s", utlsClientHelloID.Client, utlsClientHelloID.Version)
+	}
 
 	// Iterate over the remote resolver address options and select one and
 	// only one.
@@ -332,14 +343,32 @@ Known TLS fingerprints for -utls are:
 		// -doh
 		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
 			addr := turbotunnel.DummyAddr{}
-			pconn, err := NewHTTPPacketConn(NewUTLSRoundTripper(nil, utlsClientHelloID), dohURL, 32)
+			var rt http.RoundTripper
+			if utlsClientHelloID == nil {
+				transport := http.DefaultTransport.(*http.Transport).Clone()
+				// Disable DefaultTransport's default Proxy =
+				// ProxyFromEnvironment setting, for conformity
+				// with utlsRoundTripper and with DoT mode,
+				// which do not take a proxy from the
+				// environment.
+				transport.Proxy = nil
+				rt = transport
+			} else {
+				rt = NewUTLSRoundTripper(nil, utlsClientHelloID)
+			}
+			pconn, err := NewHTTPPacketConn(rt, dohURL, 32)
 			return addr, pconn, err
 		}},
 		// -dot
 		{dotAddr, func(s string) (net.Addr, net.PacketConn, error) {
 			addr := turbotunnel.DummyAddr{}
-			dialTLSContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return utlsDialContext(ctx, network, addr, nil, utlsClientHelloID)
+			var dialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)
+			if utlsClientHelloID == nil {
+				dialTLSContext = (&tls.Dialer{}).DialContext
+			} else {
+				dialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return utlsDialContext(ctx, network, addr, nil, utlsClientHelloID)
+				}
 			}
 			pconn, err := NewTLSPacketConn(dotAddr, dialTLSContext)
 			return addr, pconn, err
