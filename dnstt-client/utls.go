@@ -9,11 +9,45 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
 )
+
+// utlsClientHelloIDMap is a correspondence between human-readable labels and
+// supported utls.ClientHelloIDs.
+var utlsClientHelloIDMap = []struct {
+	Label string
+	ID    *utls.ClientHelloID
+}{
+	{"Firefox", &utls.HelloFirefox_Auto},
+	{"Firefox_55", &utls.HelloFirefox_55},
+	{"Firefox_56", &utls.HelloFirefox_56},
+	{"Firefox_63", &utls.HelloFirefox_63},
+	{"Firefox_65", &utls.HelloFirefox_65},
+	{"Chrome", &utls.HelloChrome_Auto},
+	{"Chrome_58", &utls.HelloChrome_58},
+	{"Chrome_62", &utls.HelloChrome_62},
+	{"Chrome_70", &utls.HelloChrome_70},
+	{"Chrome_72", &utls.HelloChrome_72},
+	{"Chrome_83", &utls.HelloChrome_83},
+	{"iOS", &utls.HelloIOS_Auto},
+	{"iOS_11_1", &utls.HelloIOS_11_1},
+	{"iOS_12_1", &utls.HelloIOS_12_1},
+}
+
+// utlsLookup returns a *utls.ClientHelloID from utlsClientHelloIDMap by a
+// case-insensitive label match, or nil if there is no match.
+func utlsLookup(label string) *utls.ClientHelloID {
+	for _, entry := range utlsClientHelloIDMap {
+		if strings.ToLower(label) == strings.ToLower(entry.Label) {
+			return entry.ID
+		}
+	}
+	return nil
+}
 
 // utlsDialContext connects to the given network address and initiates a TLS
 // handshake with the provided ClientHelloID, and returns the resulting TLS

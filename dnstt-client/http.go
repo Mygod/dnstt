@@ -18,13 +18,6 @@ import (
 // header in an HTTP response.
 const defaultRetryAfter = 10 * time.Second
 
-// The *http.Client shared by instances of HTTPPacketConn. We use this instead
-// of http.DefaultClient in order to set a timeout and a uTLS fingerprint.
-var httpClient = &http.Client{
-	Transport: NewUTLSRoundTripper(nil, utlsClientHelloID),
-	Timeout:   1 * time.Minute,
-}
-
 // HTTPPacketConn is an HTTP-based transport for DNS messages, used for DNS over
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
 // requests and responses.
@@ -35,6 +28,11 @@ var httpClient = &http.Client{
 //
 // https://tools.ietf.org/html/rfc8484
 type HTTPPacketConn struct {
+	// client is the http.Client used to make requests. We use this instead
+	// of http.DefaultClient in order to support setting a timeout and a
+	// uTLS fingerprint.
+	client *http.Client
+
 	// urlString is the URL to which HTTP requests will be sent, for example
 	// "https://doh.example/dns-query".
 	urlString string
@@ -57,11 +55,16 @@ type HTTPPacketConn struct {
 }
 
 // NewHTTPPacketConn creates a new HTTPPacketConn configured to use the HTTP
-// server at urlString as a DNS over HTTP resolver. urlString should include any
-// necessary path components; e.g., "/dns-query". numSenders is the number of
-// concurrent sender-receiver goroutines to run.
-func NewHTTPPacketConn(urlString string, numSenders int) (*HTTPPacketConn, error) {
+// server at urlString as a DNS over HTTP resolver. client is the http.Client
+// that will be used to make requests. urlString should include any necessary
+// path components; e.g., "/dns-query". numSenders is the number of concurrent
+// sender-receiver goroutines to run.
+func NewHTTPPacketConn(rt http.RoundTripper, urlString string, numSenders int) (*HTTPPacketConn, error) {
 	c := &HTTPPacketConn{
+		client: &http.Client{
+			Transport: rt,
+			Timeout:   1 * time.Minute,
+		},
 		urlString:       urlString,
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
 	}
@@ -81,7 +84,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	req.Header.Set("Accept", "application/dns-message")
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("User-Agent", "") // Disable default "Go-http-client/1.1".
-	resp, err := httpClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}

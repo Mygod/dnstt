@@ -23,9 +23,17 @@
 //
 // LOCALADDR is the TCP address that will listen for connections and forward
 // them over the tunnel.
+//
+// In -doh and -dot modes, the program's TLS fingerprint is camouflaged with
+// uTLS. By default, the specific TLS fingerprint is selected randomly from a
+// weighted distribution. You can set your own distribution (or specific single
+// fingerprint) using the -utls option:
+//     -utls '3*Firefox,2*Chrome,1*iOS'
+//     -utls Firefox
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,6 +41,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,9 +55,6 @@ import (
 
 // smux streams will be closed after this much time without receiving data.
 const idleTimeout = 2 * time.Minute
-
-// uTLS Client Hello fingerprint to use in all TLS connections.
-var utlsClientHelloID = &utls.HelloFirefox_Auto
 
 // dnsNameCapacity returns the number of bytes remaining for encoded data after
 // including domain in a DNS name.
@@ -78,6 +84,26 @@ func readKeyFromFile(filename string) ([]byte, error) {
 	}
 	defer f.Close()
 	return noise.ReadKey(f)
+}
+
+// sampleUTLSDistribution parses a weighted uTLS Client Hello ID distribution
+// string of the form "3*Firefox,2*Chrome,1*iOS", matches each label to a
+// utls.ClientHelloID from utlsClientHelloIDMap, and randomly samples one
+// utls.ClientHelloID from the distribution.
+func sampleUTLSDistribution(spec string) (*utls.ClientHelloID, error) {
+	weights, labels, err := parseWeightedList(spec)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]*utls.ClientHelloID, 0, len(labels))
+	for _, label := range labels {
+		id := utlsLookup(label)
+		if id == nil {
+			return nil, fmt.Errorf("unknown TLS fingerprint %q", label)
+		}
+		ids = append(ids, id)
+	}
+	return ids[sampleWeighted(weights)], nil
 }
 
 func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
@@ -204,6 +230,7 @@ func main() {
 	var pubkeyFilename string
 	var pubkeyString string
 	var udpAddr string
+	var utlsDistribution string
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
@@ -215,12 +242,35 @@ Examples:
 
 `, os.Args[0])
 		flag.PrintDefaults()
+		labels := make([]string, 0, len(utlsClientHelloIDMap))
+		for _, entry := range utlsClientHelloIDMap {
+			labels = append(labels, entry.Label)
+		}
+		fmt.Fprintf(flag.CommandLine.Output(), `
+Known TLS fingerprints for -utls are:
+`)
+		i := 0
+		for i < len(labels) {
+			var line strings.Builder
+			fmt.Fprintf(&line, "  %s", labels[i])
+			w := 2 + len(labels[i])
+			i++
+			for i < len(labels) && w+1+len(labels[i]) <= 72 {
+				fmt.Fprintf(&line, " %s", labels[i])
+				w += 1 + len(labels[i])
+				i++
+			}
+			fmt.Fprintln(flag.CommandLine.Output(), line.String())
+		}
 	}
 	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
 	flag.StringVar(&dotAddr, "dot", "", "address of DoT resolver")
 	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", noise.KeyLen*2))
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "read server public key from file")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
+	flag.StringVar(&utlsDistribution, "utls",
+		"3*Firefox_65,1*Firefox_63,3*Chrome_83,1*Chrome_72,1*iOS_12_1",
+		"choose TLS fingerprint from weighted distribution")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -264,6 +314,13 @@ Examples:
 		os.Exit(1)
 	}
 
+	utlsClientHelloID, err := sampleUTLSDistribution(utlsDistribution)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parsing -utls: %v\n", err)
+		os.Exit(1)
+	}
+	log.Printf("uTLS fingerprint %s %s", utlsClientHelloID.Client, utlsClientHelloID.Version)
+
 	// Iterate over the remote resolver address options and select one and
 	// only one.
 	var remoteAddr net.Addr
@@ -275,13 +332,16 @@ Examples:
 		// -doh
 		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
 			addr := turbotunnel.DummyAddr{}
-			pconn, err := NewHTTPPacketConn(dohURL, 32)
+			pconn, err := NewHTTPPacketConn(NewUTLSRoundTripper(nil, utlsClientHelloID), dohURL, 32)
 			return addr, pconn, err
 		}},
 		// -dot
 		{dotAddr, func(s string) (net.Addr, net.PacketConn, error) {
 			addr := turbotunnel.DummyAddr{}
-			pconn, err := NewTLSPacketConn(dotAddr)
+			dialTLSContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return utlsDialContext(ctx, network, addr, nil, utlsClientHelloID)
+			}
+			pconn, err := NewTLSPacketConn(dotAddr, dialTLSContext)
 			return addr, pconn, err
 		}},
 		// -udp

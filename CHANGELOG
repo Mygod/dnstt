@@ -1,6 +1,8 @@
 -doh and -dot mode use uTLS to camouflage their TLS Client Hello
-fingerprint. This change means that it is no longer possible to use a
-proxy in -doh mode by setting the HTTP_PROXY or HTTPS_PROXY environment
+fingerprint. The fingerprint to use is chosen randomly from a weighted
+distribution. You can control this distribution using the new -utls
+option. This change means that it is no longer possible to use a proxy
+in -doh mode by setting the HTTP_PROXY or HTTPS_PROXY environment
 variables; this was an undocumented side effect of using the Go net/http
 package with no TLS camouflage.
 

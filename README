@@ -284,7 +284,18 @@ tunnel server is acting as a proxy, for example), unless that data has
 been separately encrypted before being sent through the tunnel.
 
 dnstt-client disguises its TLS fingerprint using uTLS
-(https://github.com/refraction-networking/utls).
+(https://github.com/refraction-networking/utls). By default, a specific
+TLS Client Hello fingerprint is selected randomly from a weighted
+distribution. You can control the distribution of fingerprints (or
+select a specific single fingerprint) using the `-utls` option. The
+syntax of the option's argument is a comma-separated list of fingerprint
+names, each optionally preceded by an integer weight and `*`.
+```
+$ ./dnstt-client -utls '3*Firefox,2*Chrome,1*iOS' ...
+$ ./dnstt-client -utls Firefox ...
+```
+Run `./dnstt-client -help` to see the available fingerprint names and
+the default distribution.
 
 
 ## Encryption and authentication

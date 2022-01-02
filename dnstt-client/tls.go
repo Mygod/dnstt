@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	utls "github.com/refraction-networking/utls"
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
@@ -37,11 +36,11 @@ type TLSPacketConn struct {
 // server at addr as a DNS over TLS resolver. It maintains a TLS connection to
 // the resolver, reconnecting as necessary. It closes the connection if any
 // reconnection attempt fails.
-func NewTLSPacketConn(addr string) (*TLSPacketConn, error) {
-	dial := func() (*utls.UConn, error) {
+func NewTLSPacketConn(addr string, dialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)) (*TLSPacketConn, error) {
+	dial := func() (net.Conn, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		defer cancel()
-		return utlsDialContext(ctx, "tcp", addr, nil, utlsClientHelloID)
+		return dialTLSContext(ctx, "tcp", addr)
 	}
 	// We maintain one TLS connection at a time, redialing it whenever it
 	// becomes disconnected. We do the first dial here, outside the
