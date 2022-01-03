@@ -278,7 +278,7 @@ Known TLS fingerprints for -utls are:
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "read server public key from file")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
 	flag.StringVar(&utlsDistribution, "utls",
-		"3*Firefox_65,1*Firefox_63,3*Chrome_83,1*Chrome_72,1*iOS_12_1",
+		"3*Firefox_65,1*Firefox_63,1*iOS_12_1",
 		"choose TLS fingerprint from weighted distribution")
 	flag.Parse()
 
