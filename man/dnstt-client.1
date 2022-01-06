@@ -125,6 +125,58 @@ optional training newline character.
 
 .El
 
+
+.Sh OPTIONS
+
+
+.Bl -tag
+
+.It Fl utls Oo
+.Op Ar weight Ns Sy * Ns
+.Ar label
+.Oc Ns Op , Ns ...
+Set the weighted distribution of TLS fingerprints.
+
+.Pp
+.Nm
+uses
+.Lk https://github.com/refraction-networking/utls "uTLS"
+to disguise its TLS fingerprint.
+By default, a fingerprint is selected randomly from a weighted distribution.
+You can control the distribution using the
+.Fl utls
+option, which takes an argument of a comma-separated
+list of fingerprint labels,
+each optionally preceded by an integer weight and
+.Sy * .
+If a weight is omitted, it is taken to be 1.
+
+.Pp
+Examples:
+.Bl -item -offset indent -compact
+.It
+-utls '3*Firefox,2*Chrome,1*iOS'
+.It
+-utls Firefox
+.It
+-utls none
+.El
+
+.Pp
+Use the
+.Fl help
+option to see the default distribution
+and the set of available fingerprint labels.
+
+.It Fl help
+Describes command line usage.
+Shows the default value of
+.Fl utls
+and the available TLS fingerprint labels.
+
+.El
+
+
 .Sh EXAMPLES
 
 Tunnel through the DNS over HTTPS resolver at
@@ -169,13 +221,6 @@ This number will vary depending on the length of
 .Ar DOMAIN .
 
 .Dl effective MTU 128
-
-
-.Sh BUGS
-
-.Nm
-has a distinctive TLS fingerprint
-and is probably easy to block on that basis.
 
 
 .Sh SECURITY CONSIDERATIONS
