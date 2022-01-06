@@ -20,8 +20,8 @@ import (
 // results in the slices [2, 1, 10] and ["apple", "orange", "cookie"].
 // Bytes may be escaped by backslashes.
 //
-//   list ::= entry [ "," entry ] ;
-//   entry ::= [ weight, "*" ] label ;
+//   list ::= entry ("," entry)*
+//   entry ::= (weight "*")? label
 func parseWeightedList(s string) ([]uint32, []string, error) {
 	const (
 		kindEOF = iota
