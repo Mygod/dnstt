@@ -1,3 +1,5 @@
+## v1.20220208.0
+
 -doh and -dot mode use uTLS to camouflage their TLS Client Hello
 fingerprint. The fingerprint to use is chosen randomly from a weighted
 distribution. You can control this distribution using the new -utls
