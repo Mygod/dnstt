@@ -58,6 +58,7 @@ const (
 	RcodeFormatError     = 1  // a.k.a. FORMERR
 	RcodeNameError       = 3  // a.k.a. NXDOMAIN
 	RcodeNotImplemented  = 4  // a.k.a. NOTIMPL
+	// https://tools.ietf.org/html/rfc6891#section-9
 	ExtendedRcodeBadVers = 16 // a.k.a. BADVERS
 )
 
