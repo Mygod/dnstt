@@ -32,6 +32,7 @@ same socket up to a timeout. Similar to HTTPPacketConn and its multiple
 instantiations of sendLoop.
 
 Add support for DNS over QUIC
+https://www.rfc-editor.org/rfc/rfc9250
 https://dnsprivacy.org/wiki/display/DP/DNS+Privacy+Public+Resolvers#DNSPrivacyPublicResolvers-DNS-over-QUIC(DoQ)
 https://github.com/AdguardTeam/dnsproxy/blob/660a2da99eb6cc2cf5db9a54f1374dd58fbb5b26/upstream/upstream_quic.go
 https://security.googleblog.com/2022/07/dns-over-http3-in-android.html
