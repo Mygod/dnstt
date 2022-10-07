@@ -178,7 +178,6 @@ tunnel-client$ curl --proxy http://127.0.0.1:7000/ https://wtfismyip.com/text
 
 ### SSH SOCKS proxy
 
-
 OpenSSH has a built-in SOCKS proxy, which makes it easy to add a SOCKS
 proxy to a server that already has sshd installed.
 
