@@ -247,24 +247,38 @@ func chunks(p []byte, n int) [][]byte {
 // transport.WriteTo(query, addr). The length of p must be less than 224 bytes.
 //
 // Here is an example of how a packet is encoded into a DNS name, using
-//     p = "supercalifragilisticexpialidocious"
-//     c.clientID = "CLIENTID"
-//     domain = "t.example.com"
 //
-// 0. Start with the raw packet contents.
-//     supercalifragilisticexpialidocious
-// 1. Length-prefix the packet and add random padding. A length prefix L < 0xe0
-// means a data packet of L bytes. A length prefix L >= 0xe0 means padding of L -
-// 0xe0 bytes (not counting the length of the length prefix itself).
-//     \xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
-// 2. Prefix the ClientID.
-//     CLIENTID\xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
-// 3. Base32-encode, without padding and in lower case.
-//     ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3djmrxwg2lpovzq
-// 4. Break into labels of at most 63 octets.
-//     ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq
-// 5. Append the domain.
-//     ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq.t.example.com
+//	p = "supercalifragilisticexpialidocious"
+//	c.clientID = "CLIENTID"
+//	domain = "t.example.com"
+//
+// as the input.
+//
+//  0. Start with the raw packet contents.
+//
+//	supercalifragilisticexpialidocious
+//
+//  1. Length-prefix the packet and add random padding. A length prefix L < 0xe0
+//     means a data packet of L bytes. A length prefix L ≥ 0xe0 means padding
+//     of L − 0xe0 bytes (not counting the length of the length prefix itself).
+//
+//	\xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
+//
+//  2. Prefix the ClientID.
+//
+//	CLIENTID\xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
+//
+//  3. Base32-encode, without padding and in lower case.
+//
+//	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3djmrxwg2lpovzq
+//
+//  4. Break into labels of at most 63 octets.
+//
+//	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq
+//
+//  5. Append the domain.
+//
+//	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq.t.example.com
 func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) error {
 	var decoded []byte
 	{
