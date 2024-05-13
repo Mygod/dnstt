@@ -71,15 +71,6 @@ func utlsDialContext(ctx context.Context, network, addr string, config *utls.Con
 		return nil, err
 	}
 	uconn := utls.UClient(conn, config, *id)
-	// Manually remove the SNI if it contains an IP address.
-	// https://github.com/refraction-networking/utls/issues/96
-	if net.ParseIP(config.ServerName) != nil {
-		err := uconn.RemoveSNIExtension()
-		if err != nil {
-			uconn.Close()
-			return nil, err
-		}
-	}
 	// We must call Handshake before returning, or else the UConn may not
 	// actually use the selected ClientHelloID. It depends on whether a Read
 	// or a Write happens first. If a Read happens first, the connection
