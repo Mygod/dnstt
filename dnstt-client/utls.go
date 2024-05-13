@@ -22,6 +22,7 @@ var utlsClientHelloIDMap = []struct {
 	Label string
 	ID    *utls.ClientHelloID
 }{
+	{"random", &utls.HelloRandomizedALPN},
 	{"Firefox", &utls.HelloFirefox_Auto},
 	{"Firefox_55", &utls.HelloFirefox_55},
 	{"Firefox_56", &utls.HelloFirefox_56},

@@ -159,6 +159,8 @@ Examples:
 .It
 -utls Firefox
 .It
+-utls random
+.It
 -utls none
 .El
 
@@ -167,6 +169,9 @@ Use the
 .Fl help
 option to see the default distribution
 and the set of available fingerprint labels.
+The special value
+.Cm random
+stands for a randomized fingerprint.
 The special value
 .Cm none
 disables uTLS and uses the native Go crypto/tls fingerprint.

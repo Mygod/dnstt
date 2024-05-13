@@ -292,11 +292,13 @@ names, each optionally preceded by an integer weight and `*`.
 ```
 $ ./dnstt-client -utls '3*Firefox,2*Chrome,1*iOS' ...
 $ ./dnstt-client -utls Firefox ...
+$ ./dnstt-client -utls random ...
 ```
 Run `./dnstt-client -help` to see the available fingerprint names and
-the default distribution. The special value `none` disables uTLS and
-uses the native crypto/tls fingerprint, which is less covert but likely
-to be compatible with more servers.
+the default distribution. The `random` fingerprint is a randomized
+fingerprint. The special value `none` disables uTLS and uses the native
+crypto/tls fingerprint, which is less covert but likely to be compatible
+with more servers.
 
 
 ## Encryption and authentication
