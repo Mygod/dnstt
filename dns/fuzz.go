@@ -1,3 +1,4 @@
+//go:build gofuzz
 // +build gofuzz
 
 // Fuzzing driver for https://github.com/dvyukov/go-fuzz.

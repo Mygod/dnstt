@@ -1,40 +1,59 @@
 // dnstt-client is the client end of a DNS tunnel.
 //
 // Usage:
-//     dnstt-client [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+//
+//	dnstt-client [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
 //
 // Examples:
-//     dnstt-client -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
-//     dnstt-client -dot resolver.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
+//
+//	dnstt-client -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+//	dnstt-client -dot resolver.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
 //
 // The program supports DNS over HTTPS (DoH), DNS over TLS (DoT), and UDP DNS.
 // Use one of these options:
-//     -doh https://resolver.example/dns-query
-//     -dot resolver.example:853
-//     -udp resolver.example:53
+//
+//	-doh https://resolver.example/dns-query
+//	-dot resolver.example:853
+//	-udp resolver.example:53
 //
 // You can give the server's public key as a file or as a hex string. Use
 // "dnstt-server -gen-key" to get the public key.
-//     -pubkey-file server.pub
-//     -pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff
+//
+//	-pubkey-file server.pub
+//	-pubkey 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff
 //
 // DOMAIN is the root of the DNS zone reserved for the tunnel. See README for
 // instructions on setting it up.
 //
 // LOCALADDR is the TCP address that will listen for connections and forward
 // them over the tunnel.
+//
+// In -doh and -dot modes, the program's TLS fingerprint is camouflaged with
+// uTLS by default. The specific TLS fingerprint is selected randomly from a
+// weighted distribution. You can set your own distribution (or specific single
+// fingerprint) using the -utls option. The special value "none" disables uTLS.
+//
+//	-utls '3*Firefox,2*Chrome,1*iOS'
+//	-utls Firefox
+//	-utls none
 package main
 
 import (
+	"context"
+	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	utls "github.com/refraction-networking/utls"
 	"github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/smux"
 	"www.bamsoftware.com/git/dnstt.git/dns"
@@ -43,7 +62,7 @@ import (
 )
 
 // smux streams will be closed after this much time without receiving data.
-const idleTimeout = 10 * time.Minute
+const idleTimeout = 2 * time.Minute
 
 // dnsNameCapacity returns the number of bytes remaining for encoded data after
 // including domain in a DNS name.
@@ -75,6 +94,31 @@ func readKeyFromFile(filename string) ([]byte, error) {
 	return noise.ReadKey(f)
 }
 
+// sampleUTLSDistribution parses a weighted uTLS Client Hello ID distribution
+// string of the form "3*Firefox,2*Chrome,1*iOS", matches each label to a
+// utls.ClientHelloID from utlsClientHelloIDMap, and randomly samples one
+// utls.ClientHelloID from the distribution.
+func sampleUTLSDistribution(spec string) (*utls.ClientHelloID, error) {
+	weights, labels, err := parseWeightedList(spec)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]*utls.ClientHelloID, 0, len(labels))
+	for _, label := range labels {
+		var id *utls.ClientHelloID
+		if label == "none" {
+			id = nil
+		} else {
+			id = utlsLookup(label)
+			if id == nil {
+				return nil, fmt.Errorf("unknown TLS fingerprint %q", label)
+			}
+		}
+		ids = append(ids, id)
+	}
+	return ids[sampleWeighted(weights)], nil
+}
+
 func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	stream, err := sess.OpenStream()
 	if err != nil {
@@ -95,7 +139,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 			// smux Stream.Write may return io.EOF.
 			err = nil
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy stream←local: %v", conv, stream.ID(), err)
 		}
 		local.CloseRead()
@@ -108,7 +152,7 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 			// smux Stream.WriteTo may return io.EOF.
 			err = nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy local←stream: %v", conv, stream.ID(), err)
 		}
 		local.CloseWrite()
@@ -153,6 +197,7 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 		0, // default resend
 		1, // nc=1 => congestion window off
 	)
+	conn.SetWindowSize(turbotunnel.QueueSize/2, turbotunnel.QueueSize/2)
 	if rc := conn.SetMtu(mtu); !rc {
 		panic(rc)
 	}
@@ -167,6 +212,7 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.Version = 2
 	smuxConfig.KeepAliveTimeout = idleTimeout
+	smuxConfig.MaxStreamBuffer = 1 * 1024 * 1024 // default is 65536
 	sess, err := smux.Client(rw, smuxConfig)
 	if err != nil {
 		return fmt.Errorf("opening smux session: %v", err)
@@ -197,6 +243,7 @@ func main() {
 	var pubkeyFilename string
 	var pubkeyString string
 	var udpAddr string
+	var utlsDistribution string
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
@@ -208,12 +255,36 @@ Examples:
 
 `, os.Args[0])
 		flag.PrintDefaults()
+		labels := make([]string, 0, len(utlsClientHelloIDMap))
+		labels = append(labels, "none")
+		for _, entry := range utlsClientHelloIDMap {
+			labels = append(labels, entry.Label)
+		}
+		fmt.Fprintf(flag.CommandLine.Output(), `
+Known TLS fingerprints for -utls are:
+`)
+		i := 0
+		for i < len(labels) {
+			var line strings.Builder
+			fmt.Fprintf(&line, "  %s", labels[i])
+			w := 2 + len(labels[i])
+			i++
+			for i < len(labels) && w+1+len(labels[i]) <= 72 {
+				fmt.Fprintf(&line, " %s", labels[i])
+				w += 1 + len(labels[i])
+				i++
+			}
+			fmt.Fprintln(flag.CommandLine.Output(), line.String())
+		}
 	}
 	flag.StringVar(&dohURL, "doh", "", "URL of DoH resolver")
 	flag.StringVar(&dotAddr, "dot", "", "address of DoT resolver")
 	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", noise.KeyLen*2))
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "read server public key from file")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
+	flag.StringVar(&utlsDistribution, "utls",
+		"4*random,3*Firefox_120,1*Firefox_105,3*Chrome_120,1*Chrome_102,1*iOS_14,1*iOS_13",
+		"choose TLS fingerprint from weighted distribution")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -257,6 +328,15 @@ Examples:
 		os.Exit(1)
 	}
 
+	utlsClientHelloID, err := sampleUTLSDistribution(utlsDistribution)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parsing -utls: %v\n", err)
+		os.Exit(1)
+	}
+	if utlsClientHelloID != nil {
+		log.Printf("uTLS fingerprint %s %s", utlsClientHelloID.Client, utlsClientHelloID.Version)
+	}
+
 	// Iterate over the remote resolver address options and select one and
 	// only one.
 	var remoteAddr net.Addr
@@ -268,13 +348,34 @@ Examples:
 		// -doh
 		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
 			addr := turbotunnel.DummyAddr{}
-			pconn, err := NewHTTPPacketConn(dohURL, 32)
+			var rt http.RoundTripper
+			if utlsClientHelloID == nil {
+				transport := http.DefaultTransport.(*http.Transport).Clone()
+				// Disable DefaultTransport's default Proxy =
+				// ProxyFromEnvironment setting, for conformity
+				// with utlsRoundTripper and with DoT mode,
+				// which do not take a proxy from the
+				// environment.
+				transport.Proxy = nil
+				rt = transport
+			} else {
+				rt = NewUTLSRoundTripper(nil, utlsClientHelloID)
+			}
+			pconn, err := NewHTTPPacketConn(rt, dohURL, 32)
 			return addr, pconn, err
 		}},
 		// -dot
 		{dotAddr, func(s string) (net.Addr, net.PacketConn, error) {
 			addr := turbotunnel.DummyAddr{}
-			pconn, err := NewTLSPacketConn(dotAddr)
+			var dialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)
+			if utlsClientHelloID == nil {
+				dialTLSContext = (&tls.Dialer{}).DialContext
+			} else {
+				dialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return utlsDialContext(ctx, network, addr, nil, utlsClientHelloID)
+				}
+			}
+			pconn, err := NewTLSPacketConn(dotAddr, dialTLSContext)
 			return addr, pconn, err
 		}},
 		// -udp

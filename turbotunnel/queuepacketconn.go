@@ -48,7 +48,7 @@ func NewQueuePacketConn(localAddr net.Addr, timeout time.Duration) *QueuePacketC
 	return &QueuePacketConn{
 		remotes:   NewRemoteMap(timeout),
 		localAddr: localAddr,
-		recvQueue: make(chan taggedPacket, queueSize),
+		recvQueue: make(chan taggedPacket, QueueSize),
 		closed:    make(chan struct{}),
 	}
 }

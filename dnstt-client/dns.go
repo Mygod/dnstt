@@ -33,6 +33,10 @@ const (
 	initPollDelay       = 500 * time.Millisecond
 	maxPollDelay        = 10 * time.Second
 	pollDelayMultiplier = 2.0
+
+	// A limit on the number of empty poll requests we may send in a burst
+	// as a result of receiving data.
+	pollLimit = 16
 )
 
 // base32Encoding is a base32 encoding without padding.
@@ -74,7 +78,7 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) 
 	c := &DNSPacketConn{
 		clientID:        clientID,
 		domain:          domain,
-		pollChan:        make(chan struct{}),
+		pollChan:        make(chan struct{}, pollLimit),
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, 0),
 	}
 	go func() {
@@ -153,20 +157,27 @@ func nextPacket(r *bytes.Reader) ([]byte, error) {
 // extracts its payload and breaks it into packets, and stores the packets in a
 // queue to be returned from a future call to c.ReadFrom.
 //
-// Whenever we receive a response with a non-empty payload, we send twice on
-// c.pollChan to permit sendLoop to send two immediate polling queries. The
-// intuition behind polling immediately after receiving is that we know the
-// server has just had something to send, it may need to send more, and the only
-// way it can send is if we give it a query to respond to. The intuition behind
-// doing *two* polls when we receive is similar to TCP slow start: we want to
-// maintain some number of queries "in flight", and the faster the server is
-// sending, the higher that number should be. If we polled only once in response
-// to received data, we would tend to have only one query in flight at a time,
-// ping-pong style. The first polling request replaces the in-flight request
-// that has just finished in our receiving data; the second grows the effective
-// in-flight window proportionally to the rate at which data-carrying responses
-// are being received. Compare to Eq. (2) of
-// https://tools.ietf.org/html/rfc5681#section-3.1; the differences are that we
+// Whenever we receive a DNS response containing at least one data packet, we
+// send on c.pollChan to permit sendLoop to send an immediate polling queries.
+// KCP itself will also send an ACK packet for incoming data, which is
+// effectively a second poll. Therefore, each time we receive data, we send up
+// to 2 polling queries (or 1 + f polling queries, if KCP only ACKs an f
+// fraction of incoming data). We say "up to" because sendLoop will discard an
+// empty polling query if it has an organic non-empty packet to send (this goes
+// also for KCP's organic ACK packets).
+//
+// The intuition behind polling immediately after receiving is that if server
+// has just had something to send, it may have more to send, and in order for
+// the server to send anything, we must give it a query to respond to. The
+// intuition behind polling *2 times* (or 1 + f times) is similar to TCP slow
+// start: we want to maintain some number of queries "in flight", and the faster
+// the server is sending, the higher that number should be. If we polled only
+// once for each received packet, we would tend to have only one query in flight
+// at a time, ping-pong style. The first polling query replaces the in-flight
+// query that has just finished its duty in returning data to us; the second
+// grows the effective in-flight window proportional to the rate at which
+// data-carrying responses are being received. Compare to Eq. (2) of
+// https://tools.ietf.org/html/rfc5681#section-3.1. The differences are that we
 // count messages, not bytes, and we don't maintain an explicit window. If a
 // response comes back without data, or if a query or response is dropped by the
 // network, then we don't poll again, which decreases the effective in-flight
@@ -205,12 +216,10 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 		}
 
 		// If the payload contained one or more packets, permit sendLoop
-		// to poll immediately.
+		// to poll immediately. ACKs on received data will effectively
+		// serve as another stream of polls whose rate is proportional
+		// to the rate of incoming packets.
 		if any {
-			select {
-			case c.pollChan <- struct{}{}:
-			default:
-			}
 			select {
 			case c.pollChan <- struct{}{}:
 			default:
@@ -238,24 +247,38 @@ func chunks(p []byte, n int) [][]byte {
 // transport.WriteTo(query, addr). The length of p must be less than 224 bytes.
 //
 // Here is an example of how a packet is encoded into a DNS name, using
-//     p = "supercalifragilisticexpialidocious"
-//     c.clientID = "CLIENTID"
-//     domain = "t.example.com"
 //
-// 0. Start with the raw packet contents.
-//     supercalifragilisticexpialidocious
-// 1. Length-prefix the packet and add random padding. A length prefix L < 0xe0
-// means a data packet of L bytes. A length prefix L >= 0xe0 means padding of L -
-// 0xe0 bytes (not counting the length of the length prefix itself).
-//     \xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
-// 2. Prefix the ClientID.
-//     CLIENTID\xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
-// 3. Base32-encode, without padding and in lower case.
-//     ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3djmrxwg2lpovzq
-// 4. Break into labels of at most 63 octets.
-//     ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq
-// 5. Append the domain.
-//     ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq.t.example.com
+//	p = "supercalifragilisticexpialidocious"
+//	c.clientID = "CLIENTID"
+//	domain = "t.example.com"
+//
+// as the input.
+//
+//  0. Start with the raw packet contents.
+//
+//	supercalifragilisticexpialidocious
+//
+//  1. Length-prefix the packet and add random padding. A length prefix L < 0xe0
+//     means a data packet of L bytes. A length prefix L ≥ 0xe0 means padding
+//     of L − 0xe0 bytes (not counting the length of the length prefix itself).
+//
+//	\xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
+//
+//  2. Prefix the ClientID.
+//
+//	CLIENTID\xe3\xd9\xa3\x15\x22supercalifragilisticexpialidocious
+//
+//  3. Base32-encode, without padding and in lower case.
+//
+//	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3djmrxwg2lpovzq
+//
+//  4. Break into labels of at most 63 octets.
+//
+//	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq
+//
+//  5. Append the domain.
+//
+//	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq.t.example.com
 func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) error {
 	var decoded []byte
 	{
@@ -330,19 +353,17 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 	pollTimer := time.NewTimer(pollDelay)
 	for {
 		var p []byte
-		outgoingQueue := c.QueuePacketConn.OutgoingQueue(addr)
+		outgoing := c.QueuePacketConn.OutgoingQueue(addr)
 		pollTimerExpired := false
-		// Prioritize sending an actual data packet from OutgoingQueue.
-		// Only consider a poll when OutgoingQueue is empty.
+		// Prioritize sending an actual data packet from outgoing. Only
+		// consider a poll when outgoing is empty.
 		select {
-		case p = <-outgoingQueue:
+		case p = <-outgoing:
 		default:
 			select {
-			case p = <-outgoingQueue:
+			case p = <-outgoing:
 			case <-c.pollChan:
-				p = nil
 			case <-pollTimer.C:
-				p = nil
 				pollTimerExpired = true
 			}
 		}

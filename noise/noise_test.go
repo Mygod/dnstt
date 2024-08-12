@@ -3,7 +3,10 @@ package noise
 import (
 	"bytes"
 	"io"
+	"net"
 	"testing"
+
+	"github.com/flynn/noise"
 )
 
 func allMessages(buf []byte) ([][]byte, error) {
@@ -99,4 +102,117 @@ func TestReadKey(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestUnexpectedPayload(t *testing.T) {
+	privkey, err := GeneratePrivkey()
+	if err != nil {
+		panic(err)
+	}
+	pubkey := PubkeyFromPrivkey(privkey)
+
+	// Test the client sending an unexpected payload.
+	clientWithPayload := func(rwc io.ReadWriteCloser) error {
+		config := newConfig()
+		config.Initiator = true
+		config.PeerStatic = pubkey
+		handshakeState, err := noise.NewHandshakeState(config)
+		if err != nil {
+			return err
+		}
+
+		// -> e, es
+		msg, _, _, err := handshakeState.WriteMessage(nil, []byte("payload"))
+		if err != nil {
+			return err
+		}
+		err = writeMessage(rwc, msg)
+		if err != nil {
+			return err
+		}
+
+		// <- e, es
+		// Return nil for all errors after this point, because we expect
+		// the server to have failed, but we want to keep up the game
+		// just in case the server did not fail.
+		msg, err = readMessage(rwc)
+		if err != nil {
+			return nil
+		}
+		_, _, _, err = handshakeState.ReadMessage(nil, msg)
+		if err != nil {
+			return nil
+		}
+
+		return nil
+	}
+	func() {
+		c, s := net.Pipe()
+		defer s.Close()
+
+		// Fake a client side that sends a payload.
+		go func() {
+			defer c.Close()
+			err := clientWithPayload(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}()
+
+		server, err := NewServer(s, privkey)
+		if err == nil || err.Error() != "unexpected client payload" || server != nil {
+			t.Errorf("NewServer got (%T, %v)", server, err)
+		}
+	}()
+
+	// Test the server sending an unexpected payload.
+	serverWithPayload := func(rwc io.ReadWriteCloser) error {
+		config := newConfig()
+		config.Initiator = false
+		config.StaticKeypair = noise.DHKey{Private: privkey, Public: pubkey}
+		handshakeState, err := noise.NewHandshakeState(config)
+		if err != nil {
+			return err
+		}
+
+		// -> e, es
+		msg, err := readMessage(rwc)
+		if err != nil {
+			return err
+		}
+		_, _, _, err = handshakeState.ReadMessage(nil, msg)
+		if err != nil {
+			return err
+		}
+
+		// <- e, es
+		msg, _, _, err = handshakeState.WriteMessage(nil, []byte("payload"))
+		if err != nil {
+			return err
+		}
+		err = writeMessage(rwc, msg)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+	func() {
+		c, s := net.Pipe()
+		defer c.Close()
+
+		// Fake a server side that sends a payload.
+		go func() {
+			defer s.Close()
+			err := serverWithPayload(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}()
+
+		client, err := NewClient(c, pubkey)
+		if err == nil || err.Error() != "unexpected server payload" || client != nil {
+			t.Errorf("NewClient got (%T, %v)", client, err)
+		}
+	}()
 }

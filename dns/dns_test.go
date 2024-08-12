@@ -2,7 +2,9 @@ package dns
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,15 +19,6 @@ func namesEqual(a, b Name) bool {
 		}
 	}
 	return true
-}
-
-func anyLabelContainsDot(labels [][]byte) bool {
-	for _, label := range labels {
-		if bytes.Contains(label, []byte(".")) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestName(t *testing.T) {
@@ -85,10 +78,6 @@ func TestName(t *testing.T) {
 			{'0'}, {'1'}, {'2'}, {'3'}, {'4'}, {'5'}, {'6'}, {'7'}, {'8'}, {'9'}, {'a'}, {'b'}, {'c'}, {'d'}, {'e'}, {'f'},
 			{'0'}, {'1'}, {'2'}, {'3'}, {'4'}, {'5'}, {'6'}, {'7'}, {'8'}, {'9'}, {'A'}, {'B'}, {'C'}, {'D'}, {'E'}, {'F'},
 		}, ErrNameTooLong, ""},
-
-		// Labels may contain any octets, though ones containing dots
-		// cannot be losslessly roundtripped through a string.
-		{[][]byte{[]byte("\x00"), []byte("a.b")}, nil, "\x00.a.b"},
 	} {
 		// Test that NewName returns proper error codes, and otherwise
 		// returns an equal slice of labels.
@@ -112,21 +101,19 @@ func TestName(t *testing.T) {
 
 		// Test that parsing from a string back to a Name results in the
 		// original slice of labels.
-		if !anyLabelContainsDot(test.labels) {
-			name, err := ParseName(s)
-			if err != nil || !namesEqual(name, test.labels) {
+		name, err = ParseName(s)
+		if err != nil || !namesEqual(name, test.labels) {
+			t.Errorf("%+q parsing %+q returned (%+q, %v), expected (%+q, %v)",
+				test.labels, s, name, err, test.labels, nil)
+			continue
+		}
+		// A trailing dot should be ignored.
+		if !strings.HasSuffix(s, ".") {
+			dotName, dotErr := ParseName(s + ".")
+			if dotErr != err || !namesEqual(dotName, name) {
 				t.Errorf("%+q parsing %+q returned (%+q, %v), expected (%+q, %v)",
-					test.labels, s, name, err, test.labels, nil)
+					test.labels, s+".", dotName, dotErr, name, err)
 				continue
-			}
-			// A trailing dot should be ignored.
-			if !strings.HasSuffix(s, ".") {
-				dotName, dotErr := ParseName(s + ".")
-				if dotErr != err || !namesEqual(dotName, name) {
-					t.Errorf("%+q parsing %+q returned (%+q, %v), expected (%+q, %v)",
-						test.labels, s+".", dotName, dotErr, name, err)
-					continue
-				}
 			}
 		}
 	}
@@ -146,6 +133,72 @@ func TestParseName(t *testing.T) {
 		if err != test.err || (err == nil && !namesEqual(name, test.name)) {
 			t.Errorf("%+q returned (%+q, %v), expected (%+q, %v)",
 				test.s, name, err, test.name, test.err)
+			continue
+		}
+	}
+}
+
+func unescapeString(s string) ([][]byte, error) {
+	if s == "." {
+		return [][]byte{}, nil
+	}
+
+	var result [][]byte
+	for _, label := range strings.Split(s, ".") {
+		var buf bytes.Buffer
+		i := 0
+		for i < len(label) {
+			switch label[i] {
+			case '\\':
+				if i+3 >= len(label) {
+					return nil, fmt.Errorf("truncated escape sequence at index %v", i)
+				}
+				if label[i+1] != 'x' {
+					return nil, fmt.Errorf("malformed escape sequence at index %v", i)
+				}
+				b, err := strconv.ParseUint(string(label[i+2:i+4]), 16, 8)
+				if err != nil {
+					return nil, fmt.Errorf("malformed hex sequence at index %v", i+2)
+				}
+				buf.WriteByte(byte(b))
+				i += 4
+			default:
+				buf.WriteByte(label[i])
+				i++
+			}
+		}
+		result = append(result, buf.Bytes())
+	}
+	return result, nil
+}
+
+func TestNameString(t *testing.T) {
+	for _, test := range []struct {
+		name Name
+		s    string
+	}{
+		{[][]byte{}, "."},
+		{[][]byte{[]byte("\x00"), []byte("a.b"), []byte("c\nd\\")}, "\\x00.a\\x2eb.c\\x0ad\\x5c"},
+		{[][]byte{
+			[]byte("\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>"),
+			[]byte("?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}"),
+			[]byte("~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc"),
+			[]byte("\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb"),
+			[]byte("\xfc\xfd\xfe\xff"),
+		}, "\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\x09\\x0a\\x0b\\x0c\\x0d\\x0e\\x0f\\x10\\x11\\x12\\x13\\x14\\x15\\x16\\x17\\x18\\x19\\x1a\\x1b\\x1c\\x1d\\x1e\\x1f\\x20\\x21\\x22\\x23\\x24\\x25\\x26\\x27\\x28\\x29\\x2a\\x2b\\x2c-\\x2e\\x2f0123456789\\x3a\\x3b\\x3c\\x3d\\x3e.\\x3f\\x40ABCDEFGHIJKLMNOPQRSTUVWXYZ\\x5b\\x5c\\x5d\\x5e\\x5f\\x60abcdefghijklmnopqrstuvwxyz\\x7b\\x7c\\x7d.\\x7e\\x7f\\x80\\x81\\x82\\x83\\x84\\x85\\x86\\x87\\x88\\x89\\x8a\\x8b\\x8c\\x8d\\x8e\\x8f\\x90\\x91\\x92\\x93\\x94\\x95\\x96\\x97\\x98\\x99\\x9a\\x9b\\x9c\\x9d\\x9e\\x9f\\xa0\\xa1\\xa2\\xa3\\xa4\\xa5\\xa6\\xa7\\xa8\\xa9\\xaa\\xab\\xac\\xad\\xae\\xaf\\xb0\\xb1\\xb2\\xb3\\xb4\\xb5\\xb6\\xb7\\xb8\\xb9\\xba\\xbb\\xbc.\\xbd\\xbe\\xbf\\xc0\\xc1\\xc2\\xc3\\xc4\\xc5\\xc6\\xc7\\xc8\\xc9\\xca\\xcb\\xcc\\xcd\\xce\\xcf\\xd0\\xd1\\xd2\\xd3\\xd4\\xd5\\xd6\\xd7\\xd8\\xd9\\xda\\xdb\\xdc\\xdd\\xde\\xdf\\xe0\\xe1\\xe2\\xe3\\xe4\\xe5\\xe6\\xe7\\xe8\\xe9\\xea\\xeb\\xec\\xed\\xee\\xef\\xf0\\xf1\\xf2\\xf3\\xf4\\xf5\\xf6\\xf7\\xf8\\xf9\\xfa\\xfb.\\xfc\\xfd\\xfe\\xff"},
+	} {
+		s := test.name.String()
+		if s != test.s {
+			t.Errorf("%+q escaped to %+q, expected %+q", test.name, s, test.s)
+			continue
+		}
+		unescaped, err := unescapeString(s)
+		if err != nil {
+			t.Errorf("%+q unescaping %+q resulted in error %v", test.name, s, err)
+			continue
+		}
+		if !namesEqual(Name(unescaped), test.name) {
+			t.Errorf("%+q roundtripped through %+q to %+q", test.name, s, unescaped)
 			continue
 		}
 	}

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 )
 
 // The maximum number of DNS name compression pointers we are willing to follow.
@@ -52,10 +54,11 @@ const (
 	ClassIN = 1
 
 	// https://tools.ietf.org/html/rfc1035#section-4.1.1
-	RcodeNoError         = 0  // a.k.a. NOERROR
-	RcodeFormatError     = 1  // a.k.a. FORMERR
-	RcodeNameError       = 3  // a.k.a. NXDOMAIN
-	RcodeNotImplemented  = 4  // a.k.a. NOTIMPL
+	RcodeNoError        = 0 // a.k.a. NOERROR
+	RcodeFormatError    = 1 // a.k.a. FORMERR
+	RcodeNameError      = 3 // a.k.a. NXDOMAIN
+	RcodeNotImplemented = 4 // a.k.a. NOTIMPL
+	// https://tools.ietf.org/html/rfc6891#section-9
 	ExtendedRcodeBadVers = 16 // a.k.a. BADVERS
 )
 
@@ -66,7 +69,7 @@ const (
 type Name [][]byte
 
 // NewName returns a Name from a slice of labels, after checking the labels for
-// validity. Do not include a zero-length label at the end of the slice.
+// validity. Does not include a zero-length label at the end of the slice.
 func NewName(labels [][]byte) (Name, error) {
 	name := Name(labels)
 	// https://tools.ietf.org/html/rfc1035#section-2.3.4
@@ -103,14 +106,31 @@ func ParseName(s string) (Name, error) {
 	}
 }
 
-// String returns a string representation of name, with labels separated by
-// dots.
+// String returns a reversible string representation of name. Labels are
+// separated by dots, and any bytes in a label that are outside the set
+// [0-9A-Za-z-] are replaced with a \xXX hex escape sequence.
 func (name Name) String() string {
 	if len(name) == 0 {
 		return "."
-	} else {
-		return string(bytes.Join(name, []byte(".")))
 	}
+
+	var buf strings.Builder
+	for i, label := range name {
+		if i > 0 {
+			buf.WriteByte('.')
+		}
+		for _, b := range label {
+			if b == '-' ||
+				('0' <= b && b <= '9') ||
+				('A' <= b && b <= 'Z') ||
+				('a' <= b && b <= 'z') {
+				buf.WriteByte(b)
+			} else {
+				fmt.Fprintf(&buf, "\\x%02x", b)
+			}
+		}
+	}
+	return buf.String()
 }
 
 // TrimSuffix returns a Name with the given suffix removed, if it was present.
@@ -146,18 +166,18 @@ type Message struct {
 // Opcode extracts the OPCODE part of the Flags field.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.1
-func (msg *Message) Opcode() uint16 {
-	return (msg.Flags >> 11) & 0xf
+func (message *Message) Opcode() uint16 {
+	return (message.Flags >> 11) & 0xf
 }
 
 // Rcode extracts the RCODE part of the Flags field.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.1
-func (msg *Message) Rcode() uint16 {
-	return msg.Flags & 0x000f
+func (message *Message) Rcode() uint16 {
+	return message.Flags & 0x000f
 }
 
-// Question represents the question section of a message.
+// Question represents an entry in the question section of a message.
 //
 // https://tools.ietf.org/html/rfc1035#section-4.1.2
 type Question struct {

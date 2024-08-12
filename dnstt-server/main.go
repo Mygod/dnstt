@@ -1,23 +1,27 @@
 // dnstt-server is the server end of a DNS tunnel.
 //
 // Usage:
-//     dnstt-server -gen-key [-privkey-file PRIVKEYFILE] [-pubkey-file PUBKEYFILE]
-//     dnstt-server -udp ADDR [-privkey PRIVKEY|-privkey-file PRIVKEYFILE] DOMAIN UPSTREAMADDR
+//
+//	dnstt-server -gen-key [-privkey-file PRIVKEYFILE] [-pubkey-file PUBKEYFILE]
+//	dnstt-server -udp ADDR [-privkey PRIVKEY|-privkey-file PRIVKEYFILE] DOMAIN UPSTREAMADDR
 //
 // Example:
-//     dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
-//     dnstt-server -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
+//
+//	dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
+//	dnstt-server -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
 //
 // To generate a persistent server private key, first run with the -gen-key
 // option. By default the generated private and public keys are printed to
 // standard output. To save them to files instead, use the -privkey-file and
 // -pubkey-file options.
-//     dnstt-server -gen-key
-//     dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
+//
+//	dnstt-server -gen-key
+//	dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
 //
 // You can give the server's private key as a file or as a hex string.
-//     -privkey-file server.key
-//     -privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+//
+//	-privkey-file server.key
+//	-privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 //
 // The -udp option controls the address that will listen for incoming DNS
 // queries.
@@ -38,6 +42,7 @@ import (
 	"bytes"
 	"encoding/base32"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -57,7 +62,7 @@ import (
 
 const (
 	// smux streams will be closed after this much time without receiving data.
-	idleTimeout = 10 * time.Minute
+	idleTimeout = 2 * time.Minute
 
 	// How to set the TTL field in Answer resource records.
 	responseTTL = 60
@@ -118,10 +123,11 @@ func generateKeypair(privkeyFilename, pubkeyFilename string) (err error) {
 		}
 	}()
 
-	privkey, pubkey, err := noise.GenerateKeypair()
+	privkey, err := noise.GeneratePrivkey()
 	if err != nil {
 		return err
 	}
+	pubkey := noise.PubkeyFromPrivkey(privkey)
 
 	if privkeyFilename != "" {
 		// Save the privkey to a file.
@@ -204,7 +210,7 @@ func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
 			// smux Stream.Write may return io.EOF.
 			err = nil
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy stream←upstream: %v", conv, stream.ID(), err)
 		}
 		upstreamTCPConn.CloseRead()
@@ -217,7 +223,7 @@ func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
 			// smux Stream.WriteTo may return io.EOF.
 			err = nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 			log.Printf("stream %08x:%d copy upstream←stream: %v", conv, stream.ID(), err)
 		}
 		upstreamTCPConn.CloseWrite()
@@ -229,9 +235,9 @@ func handleStream(stream *smux.Stream, upstream string, conv uint32) error {
 
 // acceptStreams wraps a KCP session in a Noise channel and an smux.Session,
 // then awaits smux streams. It passes each stream to handleStream.
-func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream string) error {
+func acceptStreams(conn *kcp.UDPSession, privkey []byte, upstream string) error {
 	// Put a Noise channel on top of the KCP conn.
-	rw, err := noise.NewServer(conn, privkey, pubkey)
+	rw, err := noise.NewServer(conn, privkey)
 	if err != nil {
 		return err
 	}
@@ -240,6 +246,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream string
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.Version = 2
 	smuxConfig.KeepAliveTimeout = idleTimeout
+	smuxConfig.MaxStreamBuffer = 1 * 1024 * 1024 // default is 65536
 	sess, err := smux.Server(rw, smuxConfig)
 	if err != nil {
 		return err
@@ -270,7 +277,7 @@ func acceptStreams(conn *kcp.UDPSession, privkey, pubkey []byte, upstream string
 
 // acceptSessions listens for incoming KCP connections and passes them to
 // acceptStreams.
-func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream string) error {
+func acceptSessions(ln *kcp.Listener, privkey []byte, mtu int, upstream string) error {
 	for {
 		conn, err := ln.AcceptKCP()
 		if err != nil {
@@ -290,6 +297,7 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream 
 			0, // default resend
 			1, // nc=1 => congestion window off
 		)
+		conn.SetWindowSize(turbotunnel.QueueSize/2, turbotunnel.QueueSize/2)
 		if rc := conn.SetMtu(mtu); !rc {
 			panic(rc)
 		}
@@ -298,8 +306,8 @@ func acceptSessions(ln *kcp.Listener, privkey, pubkey []byte, mtu int, upstream 
 				log.Printf("end session %08x", conn.GetConv())
 				conn.Close()
 			}()
-			err := acceptStreams(conn, privkey, pubkey, upstream)
-			if err != nil {
+			err := acceptStreams(conn, privkey, upstream)
+			if err != nil && !errors.Is(err, io.ErrClosedPipe) {
 				log.Printf("session %08x acceptStreams: %v", conn.GetConv(), err)
 			}
 		}()
@@ -584,31 +592,28 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 			// overflow the capacity of the DNS response, we stash
 			// to be bundled into a future response.
 			timer := time.NewTimer(maxResponseDelay)
-		loop:
 			for {
 				var p []byte
+				unstash := ttConn.Unstash(rec.ClientID)
+				outgoing := ttConn.OutgoingQueue(rec.ClientID)
+				// Prioritize taking a packet first from the
+				// stash, then from the outgoing queue, then
+				// finally check for the expiration of the timer
+				// or for a receive on ch (indicating a new
+				// query that we must respond to).
 				select {
-				// Check the nextRec, timer, and stash cases
-				// before considering the OutgoingQueue case.
-				// Only if all these cases fail do we enter the
-				// default arm, where they are checked again in
-				// addition to OutgoingQueue.
-				case nextRec = <-ch:
-					// If there's another response waiting
-					// to be sent, wait no longer for a
-					// payload for this one.
-					break loop
-				case <-timer.C:
-					break loop
-				case p = <-ttConn.Unstash(rec.ClientID):
+				case p = <-unstash:
 				default:
 					select {
-					case nextRec = <-ch:
-						break loop
-					case <-timer.C:
-						break loop
-					case p = <-ttConn.Unstash(rec.ClientID):
-					case p = <-ttConn.OutgoingQueue(rec.ClientID):
+					case p = <-unstash:
+					case p = <-outgoing:
+					default:
+						select {
+						case p = <-unstash:
+						case p = <-outgoing:
+						case <-timer.C:
+						case nextRec = <-ch:
+						}
 					}
 				}
 				// We wait for the first packet in a bundle
@@ -616,6 +621,12 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 				// immediately available or they will be omitted
 				// from this bundle.
 				timer.Reset(0)
+
+				if len(p) == 0 {
+					// timer expired or receive on ch, we
+					// are done with this response.
+					break
+				}
 
 				limit -= 2 + len(p)
 				if payload.Len() == 0 {
@@ -627,7 +638,7 @@ func sendLoop(dnsConn net.PacketConn, ttConn *turbotunnel.QueuePacketConn, ch <-
 					// Stash this packet to send in the next
 					// response.
 					ttConn.Stash(p, rec.ClientID)
-					break loop
+					break
 				}
 				if int(uint16(len(p))) != len(p) {
 					panic(len(p))
@@ -685,9 +696,17 @@ func computeMaxEncodedPayload(limit int) int {
 	if err != nil {
 		panic(err)
 	}
-	if len(maxLengthName.String())+2 != 255 {
-		panic(fmt.Sprintf("max-length name is %d octets, should be %d %s",
-			len(maxLengthName.String())+2, 255, maxLengthName))
+	{
+		// Compute the encoded length of maxLengthName and that its
+		// length is actually at the maximum of 255 octets.
+		n := 0
+		for _, label := range maxLengthName {
+			n += len(label) + 1
+		}
+		n += 1 // For the terminating null label.
+		if n != 255 {
+			panic(fmt.Sprintf("max-length name is %d octets, should be %d %s", n, 255, maxLengthName))
+		}
 	}
 
 	queryLimit := uint16(limit)
@@ -746,10 +765,10 @@ func computeMaxEncodedPayload(limit int) int {
 	return low
 }
 
-func run(privkey, pubkey []byte, domain dns.Name, upstream string, dnsConn net.PacketConn) error {
+func run(privkey []byte, domain dns.Name, upstream string, dnsConn net.PacketConn) error {
 	defer dnsConn.Close()
 
-	log.Printf("pubkey %x", pubkey)
+	log.Printf("pubkey %x", noise.PubkeyFromPrivkey(privkey))
 
 	// We have a variable amount of room in which to encode downstream
 	// packets in each response, because each response must contain the
@@ -777,7 +796,7 @@ func run(privkey, pubkey []byte, domain dns.Name, upstream string, dnsConn net.P
 	}
 	defer ln.Close()
 	go func() {
-		err := acceptSessions(ln, privkey, pubkey, mtu, upstream)
+		err := acceptSessions(ln, privkey, mtu, upstream)
 		if err != nil {
 			log.Printf("acceptSessions: %v", err)
 		}
@@ -917,15 +936,14 @@ Example:
 			log.Println("generating a temporary one-time keypair")
 			log.Println("use the -privkey or -privkey-file option for a persistent server keypair")
 			var err error
-			privkey, _, err = noise.GenerateKeypair()
+			privkey, err = noise.GeneratePrivkey()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 		}
-		pubkey := noise.PubkeyFromPrivkey(privkey)
 
-		err = run(privkey, pubkey, domain, upstream, dnsConn)
+		err = run(privkey, domain, upstream, dnsConn)
 		if err != nil {
 			log.Fatal(err)
 		}

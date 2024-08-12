@@ -7,7 +7,6 @@ package noise
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
@@ -17,9 +16,10 @@ import (
 	"strings"
 
 	"github.com/flynn/noise"
+	"golang.org/x/crypto/curve25519"
 )
 
-// The length of public and private keys as returned by GenerateKeypair.
+// The length of public and private keys as returned by GeneratePrivkey.
 const KeyLen = 32
 
 // cipherSuite represents 25519_ChaChaPoly_BLAKE2s.
@@ -127,11 +127,10 @@ func (s *socket) Write(p []byte) (int, error) {
 
 // newConfig instantiates configuration settings that are common to clients and
 // servers.
-func newConfig(initiator bool) noise.Config {
+func newConfig() noise.Config {
 	return noise.Config{
 		CipherSuite: cipherSuite,
 		Pattern:     noise.HandshakeNK,
-		Initiator:   initiator,
 		Prologue:    []byte("dnstt 2020-04-13"),
 	}
 }
@@ -140,7 +139,8 @@ func newConfig(initiator bool) noise.Config {
 // returns after completing the handshake. It returns a non-nil error if there
 // is an error during the handshake.
 func NewClient(rwc io.ReadWriteCloser, serverPubkey []byte) (io.ReadWriteCloser, error) {
-	config := newConfig(true)
+	config := newConfig()
+	config.Initiator = true
 	config.PeerStatic = serverPubkey
 	handshakeState, err := noise.NewHandshakeState(config)
 	if err != nil {
@@ -176,9 +176,13 @@ func NewClient(rwc io.ReadWriteCloser, serverPubkey []byte) (io.ReadWriteCloser,
 // NewClient wraps an io.ReadWriteCloser in a Noise protocol as a server, and
 // returns after completing the handshake. It returns a non-nil error if there
 // is an error during the handshake.
-func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.ReadWriteCloser, error) {
-	config := newConfig(false)
-	config.StaticKeypair = noise.DHKey{Private: serverPrivkey, Public: serverPubkey}
+func NewServer(rwc io.ReadWriteCloser, serverPrivkey []byte) (io.ReadWriteCloser, error) {
+	config := newConfig()
+	config.Initiator = false
+	config.StaticKeypair = noise.DHKey{
+		Private: serverPrivkey,
+		Public:  PubkeyFromPrivkey(serverPrivkey),
+	}
 	handshakeState, err := noise.NewHandshakeState(config)
 	if err != nil {
 		return nil, err
@@ -194,7 +198,7 @@ func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.R
 		return nil, err
 	}
 	if len(payload) != 0 {
-		return nil, errors.New("unexpected server payload")
+		return nil, errors.New("unexpected client payload")
 	}
 
 	// <- e, es
@@ -210,35 +214,20 @@ func NewServer(rwc io.ReadWriteCloser, serverPrivkey, serverPubkey []byte) (io.R
 	return newSocket(rwc, recvCipher, sendCipher), nil
 }
 
-// GenerateKeypair generates a private key and the corresponding public key.
-//
-// https://noiseprotocol.org/noise.html#dh-functions
-func GenerateKeypair() (privkey, pubkey []byte, err error) {
+// GeneratePrivkey generates a private key. The corresponding public key can be
+// derived using PubkeyFromPrivkey.
+func GeneratePrivkey() ([]byte, error) {
 	pair, err := noise.DH25519.GenerateKeypair(rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// pair.Public is already filled in; assert here that PubkeyFromPrivkey
-	// agrees with it.
-	derivedPubkey := PubkeyFromPrivkey(pair.Private)
-	if !bytes.Equal(derivedPubkey, pair.Public) {
-		panic(fmt.Sprintf("expected pubkey %x, got %x", derivedPubkey, pair.Public))
-	}
-
-	return pair.Private, pair.Public, nil
+	return pair.Private, err
 }
 
 // PubkeyFromPrivkey returns the public key that corresponds to privkey.
 func PubkeyFromPrivkey(privkey []byte) []byte {
-	pair, err := noise.DH25519.GenerateKeypair(bytes.NewReader(privkey))
+	pubkey, err := curve25519.X25519(privkey, curve25519.Basepoint)
 	if err != nil {
 		panic(err)
 	}
-	if !bytes.Equal(pair.Private, privkey) {
-		panic("privkey was not as expected")
-	}
-	return pair.Public
+	return pubkey
 }
 
 // ReadKey reads a hex-encoded key from r. r must consist of a single line, with

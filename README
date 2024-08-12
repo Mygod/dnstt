@@ -98,7 +98,7 @@ You need to also run something for the tunnel server to connect to. It
 can be a proxy server or anything else. For testing, you can use an
 Ncat listener:
 ```
-tunnel-server$ ncat -lkv 127.0.0.1 8000
+tunnel-server$ ncat -l -k -v 127.0.0.1 8000
 ```
 
 
@@ -163,7 +163,7 @@ prevent them from connecting to localhost ports on the tunnel server,
 for example.
 
 ```
-tunnel-server$ ncat -lkv --proxy-type http 127.0.0.1 8000
+tunnel-server$ ncat -l -k --proxy-type http 127.0.0.1 8000
 tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
@@ -178,25 +178,48 @@ tunnel-client$ curl --proxy http://127.0.0.1:7000/ https://wtfismyip.com/text
 
 ### SSH SOCKS proxy
 
+OpenSSH has a built-in SOCKS proxy, which makes it easy to add a SOCKS
+proxy to a server that already has sshd installed.
 
-OpenSSH has a built-in SOCKS proxy. If you run an SSH server on the
-tunnel server, you can use dnstt to tunnel the SSH connection, the SSH
-server will proxy connections for you. Let's assume you have the SSH
-details configured so that you can run `ssh tunnel-server` on the tunnel
-client. Make sure `AllowTcpForwarding` is set to `yes` (the default
-value) in sshd_config.
+On the server, make a localhost SSH connection, using the `-D` option to
+open a SOCKS listener at port 8000. Then configure the tunnel server to
+forward incoming connections to port 8000. Have the tunnel client listen
+on its own local port 7000.
+
+```
+tunnel-server$ ssh -N -D 127.0.0.1:8000 -o NoHostAuthenticationForLocalhost=yes 127.0.0.1
+# Enter the password of the local user on tunnel-server
+tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+```
+
+```
+tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
+tunnel-client$ curl --proxy socks5h://127.0.0.1:7000/ https://wtfismyip.com/text
+```
+
+The above configuration, by locating the SOCKS client port on the
+server, makes a SOCKS proxy that can be used by anyone with access to
+the DNS tunnel. Alternatively, you can make an SSH SOCKS proxy for your
+own private use, with the SSH connection going through the tunnel and
+the SOCKS client port being located at the client.
+
+Let's assume you have the SSH details configured so that you can run
+`ssh tunnel-server` on the tunnel client. Make sure `AllowTcpForwarding`
+is set to `yes` (the default value) in sshd_config. Run the tunnel
+server and have it forward directly to the SSH port.
 
 ```
 tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:22
 ```
 
-The `HostKeyAlias` ssh option lets you connect to `tunnel-server` as if
-it were located at 127.0.0.1:2222. Replace `tunnel-server` with the
+Run the tunnel client with the local listening port at 127.0.0.1:7000.
+The `HostKeyAlias` ssh option lets you connect to the SSH server as if
+it were located at 127.0.0.1:8000. Replace `tunnel-server` with the
 hostname or IP address of the SSH server.
 
 ```
-tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:2222
-tunnel-client$ ssh -v -N -D 127.0.0.1:7000 -o HostKeyAlias=tunnel-server -p 2222 127.0.0.1
+tunnel-client$ ./dnstt-client -doh https://doh.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:8000
+tunnel-client$ ssh -N -D 127.0.0.1:7000 -o HostKeyAlias=tunnel-server -p 8000 127.0.0.1
 tunnel-client$ curl --proxy socks5h://127.0.0.1:7000/ https://wtfismyip.com/text
 ```
 
@@ -259,12 +282,23 @@ see anything that the tunnel server forwards to some other host (if the
 tunnel server is acting as a proxy, for example), unless that data has
 been separately encrypted before being sent through the tunnel.
 
-The dnstt client does not do anything special to disguise its TLS
-fingerprint. It uses the crypto/tls package from Go, and its TLS
-fingerprint will depend on what version of Go it was compiled with. You
-should assume that the DNS tunnel client is identifiable by TLS
-fingerprint. A path to hiding the TLS fingerprint would be to integrate
-uTLS (https://github.com/refraction-networking/utls).
+dnstt-client disguises its TLS fingerprint using uTLS
+(https://github.com/refraction-networking/utls). By default, a specific
+TLS Client Hello fingerprint is selected randomly from a weighted
+distribution. You can control the distribution of fingerprints (or
+select a specific single fingerprint) using the `-utls` option. The
+syntax of the option's argument is a comma-separated list of fingerprint
+names, each optionally preceded by an integer weight and `*`.
+```
+$ ./dnstt-client -utls '3*Firefox,2*Chrome,1*iOS' ...
+$ ./dnstt-client -utls Firefox ...
+$ ./dnstt-client -utls random ...
+```
+Run `./dnstt-client -help` to see the available fingerprint names and
+the default distribution. The `random` fingerprint is a randomized
+fingerprint. The special value `none` disables uTLS and uses the native
+crypto/tls fingerprint, which is less covert but likely to be compatible
+with more servers.
 
 
 ## Encryption and authentication
