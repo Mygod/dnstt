@@ -19,8 +19,8 @@ VERSION=$(git describe --tags)
 LDFLAGS="-s -w"
 GCFLAGS=""
 
-OSES=(linux darwin freebsd)
-ARCHS=(amd64 386)
+OSES=(linux darwin freebsd windows)
+ARCHS=(amd64 arm64 386)
 
 mkdir bin
 
@@ -36,9 +36,14 @@ for os in ${OSES[@]}; do
 		build () {
 			mkdir build
 			pushd build
-			env CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -v -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o $1 ../$1
-			$upx $1 >/dev/null
-			tar -zcf ../bin/$1-plugin-${os}-${arch}-$VERSION.tar.gz $1 -C .. $1-plugin
+			env CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -v -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o "$1${suffix}" "../$1"
+			$upx "$1${suffix}" >/dev/null
+			local archive_name="../bin/$1-plugin-${os}-${arch}-$VERSION.tar.gz"
+			if [[ "$1" == "dnstt-server" ]]; then
+				tar -zcf "$archive_name" "$1${suffix}" -C ".." "$1-plugin"
+			else
+				tar -zcf "$archive_name" "$1${suffix}"
+			fi
 			$sum ../bin/$1-plugin-${os}-${arch}-$VERSION.tar.gz
 			popd
 			rm -rf build

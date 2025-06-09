@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	dnstt-client [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+//	dnstt-client [-doh URL|-dot ADDR|-udp ADDR] (-pubkey PUBKEY|-pubkey-file PUBKEYFILE) DOMAIN LOCALADDR
 //
 // Examples:
 //
@@ -238,6 +238,72 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 }
 
 func main() {
+	// If no command-line arguments are given, try to read options from
+	// environment variables, for compatibility with shadowsocks plugins.
+	// ss-local -s 0.0.0.1 -p 1 -l 1080 -k password --plugin dnstt-client --plugin-opts 'doh=https://doh.example/dns-query;domain=<domain>;pubkey=<pubkey>'
+	if len(os.Args) == 1 {
+		pluginOpts := os.Getenv("SS_PLUGIN_OPTIONS")
+		if pluginOpts != "" {
+			var transportFlag, resolver, pubkey, domainStr string
+
+			// Parse the semicolon-separated list of options.
+			options := strings.Split(pluginOpts, ";")
+			for _, opt := range options {
+				parts := strings.SplitN(opt, "=", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+				switch key {
+				case "doh":
+					transportFlag = "-doh"
+					resolver = value
+				case "dot":
+					transportFlag = "-dot"
+					resolver = value
+				case "udp":
+					transportFlag = "-udp"
+					resolver = value
+				case "pubkey":
+					pubkey = value
+				case "domain":
+					domainStr = value
+				}
+			}
+
+			localHost := os.Getenv("SS_LOCAL_HOST")
+			localPort := os.Getenv("SS_LOCAL_PORT")
+
+			// Validate that we have all the required options, mimicking the shell script's checks.
+			if transportFlag == "" || resolver == "" {
+				log.Fatal("dnstt-client: SS_PLUGIN_OPTIONS must contain one of: doh, dot, or udp")
+			}
+			if pubkey == "" {
+				log.Fatal("dnstt-client: SS_PLUGIN_OPTIONS must contain pubkey")
+			}
+			if domainStr == "" {
+				log.Fatal("dnstt-client: SS_PLUGIN_OPTIONS must contain domain")
+			}
+			if localHost == "" {
+				log.Fatal("dnstt-client: SS_LOCAL_HOST environment variable not set")
+			}
+			if localPort == "" {
+				log.Fatal("dnstt-client: SS_LOCAL_PORT environment variable not set")
+			}
+
+			// Reconstruct os.Args so the existing flag-parsing logic can be used.
+			os.Args = []string{
+				os.Args[0],
+				transportFlag,
+				resolver,
+				"-pubkey",
+				pubkey,
+				domainStr,
+				net.JoinHostPort(localHost, localPort),
+			}
+		}
+	}
+
 	var dohURL string
 	var dotAddr string
 	var pubkeyFilename string
@@ -247,7 +313,7 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
-  %[1]s [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+  %[1]s [-doh URL|-dot ADDR|-udp ADDR] (-pubkey PUBKEY|-pubkey-file PUBKEYFILE) DOMAIN LOCALADDR
 
 Examples:
   %[1]s -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
