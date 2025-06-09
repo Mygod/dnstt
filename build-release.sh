@@ -27,6 +27,9 @@ mkdir bin
 
 for os in ${OSES[@]}; do
 	for arch in ${ARCHS[@]}; do
+    if [ "$os" == "darwin" ] && [ "$arch" == "386" ]; then
+      continue
+    fi
 		suffix=""
 		if [ "$os" == "windows" ]
 		then
