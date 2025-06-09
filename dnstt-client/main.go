@@ -51,6 +51,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -237,6 +238,8 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 	}
 }
 
+var dialerControl func(network, address string, c syscall.RawConn) error = nil
+
 func main() {
 	// If no command-line arguments are given, try to read options from
 	// environment variables, for compatibility with shadowsocks plugins.
@@ -268,6 +271,8 @@ func main() {
 					pubkey = value
 				case "domain":
 					domainStr = value
+				case "__android_vpn":
+					dialerControl = dialerControlVpn
 				}
 			}
 
@@ -275,20 +280,39 @@ func main() {
 			localPort := os.Getenv("SS_LOCAL_PORT")
 
 			// Validate that we have all the required options, mimicking the shell script's checks.
-			if transportFlag == "" || resolver == "" {
-				log.Fatal("dnstt-client: SS_PLUGIN_OPTIONS must contain one of: doh, dot, or udp")
+			if transportFlag == "" {
+				fmt.Fprintf(os.Stderr, "dnstt-client: SS_PLUGIN_OPTIONS must contain one of: doh, dot, or udp")
+				os.Exit(1)
+			}
+			if resolver == "" {
+				remoteHost := os.Getenv("SS_REMOTE_HOST")
+				remotePort := os.Getenv("SS_REMOTE_PORT")
+				if remoteHost == "" || remotePort == "" {
+					fmt.Fprintf(os.Stderr, "dnstt-client: SS_PLUGIN_OPTIONS must contain one of: doh, dot, or udp")
+					os.Exit(1)
+				}
+				resolver = net.JoinHostPort(remoteHost, remotePort)
+			}
+			if transportFlag == "-doh" {
+				if !strings.HasPrefix(strings.ToLower(resolver), "https://") {
+					resolver = "https://" + resolver + "/dns-query"
+				}
 			}
 			if pubkey == "" {
-				log.Fatal("dnstt-client: SS_PLUGIN_OPTIONS must contain pubkey")
+				fmt.Fprintf(os.Stderr, "dnstt-client: SS_PLUGIN_OPTIONS must contain pubkey")
+				os.Exit(1)
 			}
 			if domainStr == "" {
-				log.Fatal("dnstt-client: SS_PLUGIN_OPTIONS must contain domain")
+				fmt.Fprintf(os.Stderr, "dnstt-client: SS_PLUGIN_OPTIONS must contain domain")
+				os.Exit(1)
 			}
 			if localHost == "" {
-				log.Fatal("dnstt-client: SS_LOCAL_HOST environment variable not set")
+				fmt.Fprintf(os.Stderr, "dnstt-client: SS_LOCAL_HOST environment variable not set")
+				os.Exit(1)
 			}
 			if localPort == "" {
-				log.Fatal("dnstt-client: SS_LOCAL_PORT environment variable not set")
+				fmt.Fprintf(os.Stderr, "dnstt-client: SS_LOCAL_PORT environment variable not set")
+				os.Exit(1)
 			}
 
 			// Reconstruct os.Args so the existing flag-parsing logic can be used.
@@ -435,7 +459,11 @@ Known TLS fingerprints for -utls are:
 			addr := turbotunnel.DummyAddr{}
 			var dialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)
 			if utlsClientHelloID == nil {
-				dialTLSContext = (&tls.Dialer{}).DialContext
+				dialTLSContext = (&tls.Dialer{
+					NetDialer: &net.Dialer{
+						Control: dialerControl,
+					},
+				}).DialContext
 			} else {
 				dialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 					return utlsDialContext(ctx, network, addr, nil, utlsClientHelloID)
@@ -450,7 +478,10 @@ Known TLS fingerprints for -utls are:
 			if err != nil {
 				return nil, nil, err
 			}
-			pconn, err := net.ListenUDP("udp", nil)
+			lc := net.ListenConfig{
+				Control: dialerControl,
+			}
+			pconn, err := lc.ListenPacket(context.Background(), "udp", ":0")
 			return addr, pconn, err
 		}},
 	} {

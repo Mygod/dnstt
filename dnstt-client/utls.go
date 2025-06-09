@@ -77,7 +77,9 @@ func utlsDialContext(ctx context.Context, network, addr string, config *utls.Con
 		}
 		config.ServerName = host
 	}
-	dialer := &net.Dialer{}
+	dialer := &net.Dialer{
+		Control: dialerControl,
+	}
 	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
