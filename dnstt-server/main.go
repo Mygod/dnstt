@@ -580,7 +580,7 @@ func (m *FallbackManager) HandlePacket(packet []byte, clientAddr net.Addr) {
 		// Session doesn't exist, create a new one.
 		newConn, err := net.ListenPacket("udp", ":0")
 		if err != nil {
-			log.Printf("failed to create fallback socket for %s: %v", clientKey, err)
+			log.Printf("failed to create fallback socket for %v: %v", clientKey, err)
 			return
 		}
 		proxyConn = newConn // Use the new connection
@@ -601,7 +601,7 @@ func (m *FallbackManager) HandlePacket(packet []byte, clientAddr net.Addr) {
 	// Forward the client's packet to the fallback address.
 	_, err := proxyConn.WriteTo(packet, m.fallbackAddr)
 	if err != nil {
-		log.Printf("fallback write to %s for client %s failed: %v", m.fallbackAddr, clientKey, err)
+		log.Printf("fallback write to %s for client %v failed: %v", m.fallbackAddr, clientKey, err)
 	}
 }
 
